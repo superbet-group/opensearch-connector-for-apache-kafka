@@ -34,7 +34,7 @@ jobs:
     strategy:
       matrix:
         java-version: [ 11, 17, 19 ]
-        runs-on: [ubuntu-latest, windows-latest]
+        runs-on: [ubuntu-latest]
     name: Build on ${{ matrix.runs-on }} with jdk ${{ matrix.java-version }}
     runs-on: ${{ matrix.runs-on }}
     steps:
@@ -53,4 +53,6 @@ jobs:
           cache: gradle
       - name: Build with Gradle
         run: npx semantic-release
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
         
