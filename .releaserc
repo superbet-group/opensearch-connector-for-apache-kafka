@@ -1,32 +1,19 @@
 {
-    "repositoryUrl": "https://github.com/superbet-group/risk.kafka.connect-transforms",
+    "repositoryUrl": "https://github.com/superbet-group/opensearch-connector-for-apache-kafka",
     "branches": [
-        {
-            "name": "main"
-        },
-        {
-            "name": "beta",
-            "channel": "beta"
-        }
+    { "name": "main" },
+    { "name": "beta", "channel": "beta" }
     ],
     "plugins": [
         "@semantic-release/commit-analyzer",
         "@semantic-release/release-notes-generator",
-        [
-            "@semantic-release/github",
-            {
-                "assets": [
-                    {
-                        "path": "target/*.zip"
-                    },
-                ]
-            }
-        ],
-        [
-            "@semantic-release/exec",
-            {
-                "prepareCmd": "./gradlew distTar distZip"
-            }
-        ]
+        ["@semantic-release/github", {
+            "assets": [
+                {"path": "target/*.zip"},
+            ]
+        }],
+        ["@semantic-release/exec", {
+            "prepareCmd": "./gradlew distTar distZip"
+        }]
     ]
 }
