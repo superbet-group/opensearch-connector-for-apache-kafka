@@ -48,6 +48,7 @@ jobs:
         uses: actions/setup-node@v1
         with:
           node-version: 18.14.0
+      - run: npm install -g semantic-release@18.0.1 @semantic-release/github@8.0.4 @semantic-release/changelog @semantic-release/commit-analyzer @semantic-release/exec semantic-release/git semantic-release/release-notes-generator
       - name: Set up JDK ${{ matrix.java-version }}
         uses: actions/setup-java@v3
         with:
