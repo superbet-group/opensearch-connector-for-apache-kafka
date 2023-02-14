@@ -1,8 +1,8 @@
 {
     "repositoryUrl": "https://github.com/superbet-group/opensearch-connector-for-apache-kafka",
     "branches": [
-    { "name": "main" },
-    { "name": "beta", "channel": "beta" }
+        { "name": "main" },
+        { "name": "beta", "channel": "beta" },
     ],
     "plugins": [
         "@semantic-release/commit-analyzer",
