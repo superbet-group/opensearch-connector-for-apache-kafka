@@ -14,7 +14,7 @@
             ]
         }],
         ["@semantic-release/exec", {
-            "prepareCmd": "./gradlew distTar distZip"
+            "prepareCmd": "sed -i -e \"s/^version=.\\+$/version=${nextRelease.version}/g\" gradle.properties && ./gradlew distTar distZip"
         }]
     ]
 }
