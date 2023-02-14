@@ -40,6 +40,10 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
+      - name: Setup Node.js and semantic-release plugins
+        uses: actions/setup-node@v1
+        with:
+          node-version: 16.15.0
       - name: Set up JDK ${{ matrix.java-version }}
         uses: actions/setup-java@v3
         with:
@@ -47,5 +51,5 @@ jobs:
           distribution: 'temurin'
           cache: gradle
       - name: Build with Gradle
-        run: ./gradlew build -x integrationTest
+        run: npx semantic-release
         
