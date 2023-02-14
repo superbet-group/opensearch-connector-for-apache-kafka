@@ -1,15 +1,32 @@
 {
     "repositoryUrl": "https://github.com/superbet-group/risk.kafka.connect-transforms",
+    "branches": [
+        {
+            "name": "main"
+        },
+        {
+            "name": "beta",
+            "channel": "beta"
+        }
+    ],
     "plugins": [
         "@semantic-release/commit-analyzer",
         "@semantic-release/release-notes-generator",
-        ["@semantic-release/github", {
-            "assets": [
-                {"path": "target/*.zip"},
-            ]
-        }],
-        ["@semantic-release/exec", {
-            "prepareCmd": "./gradlew distTar distZip"
-        }]
+        [
+            "@semantic-release/github",
+            {
+                "assets": [
+                    {
+                        "path": "target/*.zip"
+                    },
+                ]
+            }
+        ],
+        [
+            "@semantic-release/exec",
+            {
+                "prepareCmd": "./gradlew distTar distZip"
+            }
+        ]
     ]
 }
