@@ -1,0 +1,20 @@
+{
+    "repositoryUrl": "https://github.com/superbet-group/opensearch-connector-for-apache-kafka",
+    "branches": [
+        { "name": "main" },
+        { "name": "beta", "channel": "beta", "prerelease": true },
+    ],
+    "plugins": [
+        "@semantic-release/commit-analyzer",
+        "@semantic-release/release-notes-generator",
+        ["@semantic-release/github", {
+            "assets": [
+                {"path": "build/distributions/*.zip"},
+                {"path": "build/distributions/*.tar"},
+            ]
+        }],
+        ["@semantic-release/exec", {
+            "prepareCmd": "sed -i -e \"s/^version=.\\+$/version=${nextRelease.version}/g\" gradle.properties && ./gradlew distTar distZip"
+        }]
+    ]
+}
