@@ -56,6 +56,12 @@ public class OpensearchSinkConnectorConfig extends AbstractConfig {
     private static final String CONNECTION_URL_DOC =
             "List of OpenSearch HTTP connection URLs e.g. ``http://eshost1:9200,"
                     + "http://eshost2:9200``.";
+
+    public static final String MAX_BATCH_PAYLOAD_BYTES_CONFIG = "max.batch.payload.bytes";
+    private static final String MAX_BATCH_PAYLOAD_BYTES_DOC =
+            "The maximum payload size in bytes for a single batch of records sent to OpenSearch. "
+            + "The default value is the maximum integer value, which is 2,147,483,647 bytes (approximately 2GB).";
+
     public static final String BATCH_SIZE_CONFIG = "batch.size";
     private static final String BATCH_SIZE_DOC =
             "The number of records to process as a batch when writing to OpenSearch.";
@@ -261,6 +267,16 @@ public class OpensearchSinkConnectorConfig extends AbstractConfig {
                 ++order,
                 Width.LONG,
                 "Connection URLs"
+        ).define(
+                MAX_BATCH_PAYLOAD_BYTES_CONFIG,
+                Type.INT,
+                Integer.MAX_VALUE,
+                Importance.MEDIUM,
+                MAX_BATCH_PAYLOAD_BYTES_DOC,
+                CONNECTOR_GROUP_NAME,
+                ++order,
+                Width.SHORT,
+                "Max Batch Payload Bytes"
         ).define(
                 BATCH_SIZE_CONFIG,
                 Type.INT,
@@ -610,6 +626,10 @@ public class OpensearchSinkConnectorConfig extends AbstractConfig {
 
     public int maxBufferedRecords() {
         return getInt(OpensearchSinkConnectorConfig.MAX_BUFFERED_RECORDS_CONFIG);
+    }
+
+    public int maxBatchPayloadBytes() {
+        return getInt(MAX_BATCH_PAYLOAD_BYTES_CONFIG);
     }
 
     public int batchSize() {
