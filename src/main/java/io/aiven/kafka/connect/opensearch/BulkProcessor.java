@@ -17,23 +17,6 @@
 
 package io.aiven.kafka.connect.opensearch;
 
-import java.io.IOException;
-import java.util.ArrayDeque;
-import java.util.ArrayList;
-import java.util.Deque;
-import java.util.List;
-import java.util.Locale;
-import java.util.concurrent.Callable;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
-import java.util.concurrent.ThreadFactory;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.atomic.AtomicReference;
-import java.util.stream.Collectors;
-
 import org.apache.kafka.common.config.ConfigDef;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.connect.errors.ConnectException;
@@ -50,6 +33,14 @@ import org.opensearch.rest.RestStatus;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import java.io.IOException;
+import java.util.*;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Collectors;
 
 import static io.aiven.kafka.connect.opensearch.RetryUtil.callWithRetry;
 
@@ -115,13 +106,13 @@ public class BulkProcessor {
 
         if (!config.ignoreKey() && config.behaviorOnVersionConflict() == BehaviorOnVersionConflict.FAIL) {
             LOGGER.warn("The {} is set to `false` which assumes external version and optimistic locking."
-                    + " You may consider changing the configuration property '{}' from '{}' to '{}' or '{}'"
-                    + " to deal with possible version conflicts.",
-                OpensearchSinkConnectorConfig.KEY_IGNORE_CONFIG,
-                OpensearchSinkConnectorConfig.BEHAVIOR_ON_VERSION_CONFLICT_CONFIG,
-                BehaviorOnMalformedDoc.FAIL,
-                BehaviorOnMalformedDoc.IGNORE,
-                BehaviorOnMalformedDoc.WARN);
+                            + " You may consider changing the configuration property '{}' from '{}' to '{}' or '{}'"
+                            + " to deal with possible version conflicts.",
+                    OpensearchSinkConnectorConfig.KEY_IGNORE_CONFIG,
+                    OpensearchSinkConnectorConfig.BEHAVIOR_ON_VERSION_CONFLICT_CONFIG,
+                    BehaviorOnMalformedDoc.FAIL,
+                    BehaviorOnMalformedDoc.IGNORE,
+                    BehaviorOnMalformedDoc.WARN);
         }
     }
 
@@ -176,10 +167,16 @@ public class BulkProcessor {
         assert !unsentRecords.isEmpty();
         final int batchableSize = Math.min(batchSize, unsentRecords.size());
         final var batch = new ArrayList<DocWriteWrapper>(batchableSize);
+
+        long totalSize = 0L;
         for (int i = 0; i < batchableSize; i++) {
-            batch.add(unsentRecords.removeFirst());
+            final DocWriteWrapper current = unsentRecords.removeFirst();
+            totalSize += current.docWriteRequest.ramBytesUsed();
+            batch.add(current);
         }
         inFlightRecords += batchableSize;
+
+        LOGGER.error("SERGEJ total submit batch is {}", totalSize);
         return executor.submit(new BulkTask(batch, maxRetries, retryBackoffMs));
     }
 
@@ -405,12 +402,12 @@ public class BulkProcessor {
                                 } else {
                                     throw new RuntimeException(
                                             "One of the item in the bulk response failed. Reason: "
-                                            + itemResponse.getFailureMessage());
+                                                    + itemResponse.getFailureMessage());
                                 }
                             } else {
                                 throw new ConnectException(
                                         "One of the item in the bulk response aborted. Reason: "
-                                        + itemResponse.getFailureMessage());
+                                                + itemResponse.getFailureMessage());
                             }
                         }
                     }
