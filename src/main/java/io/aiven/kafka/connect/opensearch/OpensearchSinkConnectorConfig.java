@@ -53,6 +53,16 @@ public class OpensearchSinkConnectorConfig extends AbstractConfig {
     public static final String CONNECTION_URL_CONFIG = "connection.url";
     private static final String CONNECTION_URL_DOC = "List of OpenSearch HTTP connection URLs e.g. ``http://eshost1:9200,"
             + "http://eshost2:9200``.";
+
+    public static final String MAX_BATCH_PAYLOAD_BYTES_CONFIG = "max.batch.payload.bytes";
+    private static final String MAX_BATCH_PAYLOAD_BYTES_DOC = "The maximum payload size in bytes for a single batch of records sent to OpenSearch. "
+            + "The default value is the maximum integer value, which is 2,147,483,647 bytes (approximately 2GB).";
+
+    public static final String BEHAVIOR_ON_LARGE_MESSAGE_CONFIG = "behavior.on.large.message";
+    private static final String BEHAVIOR_ON_LARGE_MESSAGE_DOC = "How to handle records with a payload size that exceeds the maximum batch payload size. "
+            + "Valid options are:\n" + "- ``fail`` - fail the task.\n" + "- ``skip`` - skip the message.\n"
+            + "- ``pass`` - pass the message without processing.\n";
+
     public static final String BATCH_SIZE_CONFIG = "batch.size";
     private static final String BATCH_SIZE_DOC = "The number of records to process as a batch when writing to OpenSearch.";
     public static final String MAX_IN_FLIGHT_REQUESTS_CONFIG = "max.in.flight.requests";
@@ -239,6 +249,13 @@ public class OpensearchSinkConnectorConfig extends AbstractConfig {
         }, Importance.HIGH, CONNECTION_URL_DOC, CONNECTOR_GROUP_NAME, ++order, Width.LONG, "Connection URLs")
                 .define(BATCH_SIZE_CONFIG, Type.INT, 2000, Importance.MEDIUM, BATCH_SIZE_DOC, CONNECTOR_GROUP_NAME,
                         ++order, Width.SHORT, "Batch Size")
+                .define(MAX_BATCH_PAYLOAD_BYTES_CONFIG, Type.INT, Integer.MAX_VALUE, Importance.MEDIUM,
+                        MAX_BATCH_PAYLOAD_BYTES_DOC, CONNECTOR_GROUP_NAME, ++order, Width.SHORT,
+                        "Max Batch Payload Bytes")
+                .define(BEHAVIOR_ON_LARGE_MESSAGE_CONFIG, Type.STRING,
+                        BulkProcessor.BehaviorOnLargeMessage.DEFAULT.toString(),
+                        BulkProcessor.BehaviorOnLargeMessage.VALIDATOR, Importance.HIGH, BEHAVIOR_ON_LARGE_MESSAGE_DOC,
+                        CONNECTOR_GROUP_NAME, ++order, Width.SHORT, "Behavior on Large Message")
                 .define(MAX_IN_FLIGHT_REQUESTS_CONFIG, Type.INT, 5, Importance.MEDIUM, MAX_IN_FLIGHT_REQUESTS_DOC,
                         CONNECTOR_GROUP_NAME, ++order, Width.SHORT, "Max In-flight Requests")
                 .define(MAX_BUFFERED_RECORDS_CONFIG, Type.INT, 20000, Importance.LOW, MAX_BUFFERED_RECORDS_DOC,
@@ -407,6 +424,15 @@ public class OpensearchSinkConnectorConfig extends AbstractConfig {
 
     public int maxBufferedRecords() {
         return getInt(OpensearchSinkConnectorConfig.MAX_BUFFERED_RECORDS_CONFIG);
+    }
+
+    public BulkProcessor.BehaviorOnLargeMessage behaviorOnLargeMessage() {
+        return BulkProcessor.BehaviorOnLargeMessage
+                .forValue(getString(OpensearchSinkConnectorConfig.BEHAVIOR_ON_LARGE_MESSAGE_CONFIG));
+    }
+
+    public int maxBatchPayloadBytes() {
+        return getInt(MAX_BATCH_PAYLOAD_BYTES_CONFIG);
     }
 
     public int batchSize() {

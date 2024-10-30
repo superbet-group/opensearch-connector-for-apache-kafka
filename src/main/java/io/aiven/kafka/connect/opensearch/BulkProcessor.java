@@ -60,6 +60,8 @@ public class BulkProcessor {
     private final Time time;
     private final RestHighLevelClient client;
     private final int maxBufferedRecords;
+    private final BehaviorOnLargeMessage behaviorOnLargeMessage;
+    private final int maxBatchPayloadBytes;
     private final int batchSize;
     private final long lingerMs;
     private final int maxRetries;
@@ -94,6 +96,8 @@ public class BulkProcessor {
         this.client = client;
 
         this.maxBufferedRecords = config.maxBufferedRecords();
+        this.maxBatchPayloadBytes = config.maxBatchPayloadBytes();
+        this.behaviorOnLargeMessage = config.behaviorOnLargeMessage();
         this.batchSize = config.batchSize();
         this.lingerMs = config.lingerMs();
         this.maxRetries = config.maxRetry();
@@ -168,10 +172,44 @@ public class BulkProcessor {
         assert !unsentRecords.isEmpty();
         final int batchableSize = Math.min(batchSize, unsentRecords.size());
         final var batch = new ArrayList<DocWriteWrapper>(batchableSize);
+
+        long totalSize = 0L;
         for (int i = 0; i < batchableSize; i++) {
-            batch.add(unsentRecords.removeFirst());
+            final DocWriteWrapper current = unsentRecords.removeFirst();
+            final long documentBytes = current.docWriteRequest.ramBytesUsed();
+
+            if (documentBytes > maxBatchPayloadBytes) {
+                // when document size exceeds the maximum batch payload size, the behavior is configurable.
+                switch (behaviorOnLargeMessage) {
+                    case FAIL :
+                        LOGGER.error("Document size of {} exceeds the maximum batch payload size of {}. Stopping.",
+                                documentBytes, maxBatchPayloadBytes);
+                        throw new ConnectException("Single document size exceeds the maximum batch payload size.");
+                    case SKIP :
+                        LOGGER.warn("Document size of {} exceeds the maximum batch payload size of {}. "
+                                + "Document will be skipped.", documentBytes, maxBatchPayloadBytes);
+                        continue;
+                    case PASS :
+                    default :
+                        LOGGER.warn(
+                                "Document size of {} exceeds the maximum batch payload size of {}. "
+                                        + "Document will be passed. Try to tune this warning by setting value of "
+                                        + OpensearchSinkConnectorConfig.MAX_BATCH_PAYLOAD_BYTES_CONFIG,
+                                documentBytes, maxBatchPayloadBytes);
+                        break;
+                }
+            }
+
+            if (totalSize + documentBytes > maxBatchPayloadBytes) {
+                // if adding this record would exceed the max batch size, put it back and stop
+                unsentRecords.addFirst(current);
+                break;
+            }
+            totalSize += current.docWriteRequest.ramBytesUsed();
+            batch.add(current);
         }
         inFlightRecords += batchableSize;
+
         return executor.submit(new BulkTask(batch, maxRetries, retryBackoffMs));
     }
 
@@ -555,6 +593,52 @@ public class BulkProcessor {
             return (ConnectException) t;
         } else {
             return new ConnectException(t);
+        }
+    }
+
+    public enum BehaviorOnLargeMessage {
+        FAIL, SKIP, PASS;
+
+        public static final BehaviorOnLargeMessage DEFAULT = PASS;
+
+        public static final ConfigDef.Validator VALIDATOR = new ConfigDef.Validator() {
+            private final ConfigDef.ValidString validator = ConfigDef.ValidString.in(names());
+
+            @Override
+            public void ensureValid(final String name, final Object value) {
+                if (value instanceof String) {
+                    final String lowerCaseStringValue = ((String) value).toLowerCase(Locale.ROOT);
+                    validator.ensureValid(name, lowerCaseStringValue);
+                } else {
+                    validator.ensureValid(name, value);
+                }
+            }
+
+            // Overridden here so that ConfigDef.toEnrichedRst shows possible values correctly
+            @Override
+            public String toString() {
+                return validator.toString();
+            }
+        };
+
+        public static String[] names() {
+            final BehaviorOnLargeMessage[] behaviors = values();
+            final String[] result = new String[behaviors.length];
+
+            for (int i = 0; i < behaviors.length; i++) {
+                result[i] = behaviors[i].toString();
+            }
+
+            return result;
+        }
+
+        public static BehaviorOnLargeMessage forValue(final String value) {
+            return valueOf(value.toUpperCase(Locale.ROOT));
+        }
+
+        @Override
+        public String toString() {
+            return name().toLowerCase(Locale.ROOT);
         }
     }
 
