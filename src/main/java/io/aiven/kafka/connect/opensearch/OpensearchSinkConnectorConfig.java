@@ -62,6 +62,15 @@ public class OpensearchSinkConnectorConfig extends AbstractConfig {
             "The maximum payload size in bytes for a single batch of records sent to OpenSearch. "
             + "The default value is the maximum integer value, which is 2,147,483,647 bytes (approximately 2GB).";
 
+    public static final String BEHAVIOR_ON_LARGE_MESSAGE_CONFIG = "behavior.on.large.message";
+    private static final String BEHAVIOR_ON_LARGE_MESSAGE_DOC =
+            "How to handle records with a payload size that exceeds the maximum batch payload size. "
+                    + "Valid options are:\n"
+                    + "- ``fail`` - fail the task.\n"
+                    + "- ``skip`` - skip the message.\n"
+                    + "- ``pass`` - pass the message without processing.\n";
+
+
     public static final String BATCH_SIZE_CONFIG = "batch.size";
     private static final String BATCH_SIZE_DOC =
             "The number of records to process as a batch when writing to OpenSearch.";
@@ -277,6 +286,17 @@ public class OpensearchSinkConnectorConfig extends AbstractConfig {
                 ++order,
                 Width.SHORT,
                 "Max Batch Payload Bytes"
+        ).define(
+                BEHAVIOR_ON_LARGE_MESSAGE_CONFIG,
+                Type.STRING,
+                BulkProcessor.BehaviorOnLargeMessage.DEFAULT.toString(),
+                BulkProcessor.BehaviorOnLargeMessage.VALIDATOR,
+                Importance.HIGH,
+                BEHAVIOR_ON_LARGE_MESSAGE_DOC,
+                CONNECTOR_GROUP_NAME,
+                ++order,
+                Width.SHORT,
+                "Behavior on Large Message"
         ).define(
                 BATCH_SIZE_CONFIG,
                 Type.INT,
@@ -626,6 +646,12 @@ public class OpensearchSinkConnectorConfig extends AbstractConfig {
 
     public int maxBufferedRecords() {
         return getInt(OpensearchSinkConnectorConfig.MAX_BUFFERED_RECORDS_CONFIG);
+    }
+
+    public BulkProcessor.BehaviorOnLargeMessage behaviorOnLargeMessage() {
+        return BulkProcessor.BehaviorOnLargeMessage.forValue(
+                getString(OpensearchSinkConnectorConfig.BEHAVIOR_ON_LARGE_MESSAGE_CONFIG)
+        );
     }
 
     public int maxBatchPayloadBytes() {
