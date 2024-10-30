@@ -18,8 +18,17 @@ package io.aiven.kafka.connect.opensearch;
 import static io.aiven.kafka.connect.opensearch.RetryUtil.callWithRetry;
 
 import java.io.IOException;
-import java.util.*;
-import java.util.concurrent.*;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Deque;
+import java.util.List;
+import java.util.Locale;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
@@ -169,23 +178,23 @@ public class BulkProcessor {
             final DocWriteWrapper current = unsentRecords.removeFirst();
             final long documentBytes = current.docWriteRequest.ramBytesUsed();
 
-
             if (documentBytes > maxBatchPayloadBytes) {
                 // when document size exceeds the maximum batch payload size, the behavior is configurable.
                 switch (behaviorOnLargeMessage) {
-                    case FAIL:
+                    case FAIL :
                         LOGGER.error("Document size of {} exceeds the maximum batch payload size of {}. Stopping.",
                                 documentBytes, maxBatchPayloadBytes);
                         throw new ConnectException("Single document size exceeds the maximum batch payload size.");
-                    case SKIP:
+                    case SKIP :
                         LOGGER.warn("Document size of {} exceeds the maximum batch payload size of {}. "
                                 + "Document will be skipped.", documentBytes, maxBatchPayloadBytes);
                         continue;
-                    case PASS:
-                    default:
-                        LOGGER.warn("Document size of {} exceeds the maximum batch payload size of {}. "
-                                + "Document will be passed. Try to tune this warning by setting value of "
-                                + OpensearchSinkConnectorConfig.MAX_BATCH_PAYLOAD_BYTES_CONFIG,
+                    case PASS :
+                    default :
+                        LOGGER.warn(
+                                "Document size of {} exceeds the maximum batch payload size of {}. "
+                                        + "Document will be passed. Try to tune this warning by setting value of "
+                                        + OpensearchSinkConnectorConfig.MAX_BATCH_PAYLOAD_BYTES_CONFIG,
                                 documentBytes, maxBatchPayloadBytes);
                         break;
                 }
@@ -588,9 +597,7 @@ public class BulkProcessor {
     }
 
     public enum BehaviorOnLargeMessage {
-        FAIL,
-        SKIP,
-        PASS;
+        FAIL, SKIP, PASS;
 
         public static final BehaviorOnLargeMessage DEFAULT = PASS;
 
