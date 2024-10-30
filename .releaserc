@@ -15,9 +15,11 @@
         }],
         ["@semantic-release/exec", {
             "prepareCmd": "sed -i -e \"s/^version=.\\+$/version=${nextRelease.version}/g\" gradle.properties && ./gradlew distTar distZip"
+        }],
+        ["@semantic-release/release", {
+            "release": {
+                "tag": "3.1.1-happening"
+            }
         }]
-    ],
-    "release": {
-        "tag": "3.1.1-happening"
-    }
+    ]
 }
