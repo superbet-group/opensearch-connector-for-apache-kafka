@@ -14,7 +14,7 @@
             ]
         }],
         ["@semantic-release/exec", {
-            "prepareCmd": "sed -i -e \"s/^version=.\\+$/version=3.1.1-happening/g\" gradle.properties && ./gradlew distTar distZip"
+            "prepareCmd": "sed -i -e \"s/^version=.\\+$/version=${nextRelease.version}/g\" gradle.properties && ./gradlew distTar distZip"
         }]
     ]
 }
