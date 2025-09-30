@@ -33,7 +33,7 @@ import io.aiven.kafka.connect.opensearch.spi.ConfigDefContributor;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-public class OpensearchSinkConnectorConfigTest {
+public class OpensearchSinkSuperbetConnectorConfigTest {
 
     private Map<String, String> props;
 

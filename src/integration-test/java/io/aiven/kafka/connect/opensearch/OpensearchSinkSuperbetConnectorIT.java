@@ -25,15 +25,15 @@ import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-public class OpensearchSinkConnectorIT extends AbstractKafkaConnectIT {
+public class OpensearchSinkSuperbetConnectorIT extends AbstractKafkaConnectIT {
 
-    static final Logger LOGGER = LoggerFactory.getLogger(OpensearchSinkConnectorIT.class);
+    static final Logger LOGGER = LoggerFactory.getLogger(OpensearchSinkSuperbetConnectorIT.class);
 
     static final String CONNECTOR_NAME = "os-sink-connector";
 
     static final String TOPIC_NAME = "os-topic";
 
-    public OpensearchSinkConnectorIT() {
+    public OpensearchSinkSuperbetConnectorIT() {
         super(TOPIC_NAME, CONNECTOR_NAME);
     }
 
@@ -56,8 +56,8 @@ public class OpensearchSinkConnectorIT extends AbstractKafkaConnectIT {
 
     @Test
     public void testConnectorConfig() throws Exception {
-        assertEquals(connect.validateConnectorConfig("io.aiven.kafka.connect.opensearch.OpensearchSinkConnector",
-                Map.of("connector.class", "io.aiven.kafka.connect.opensearch.OpensearchSinkConnector", "topics",
+        assertEquals(connect.validateConnectorConfig("io.aiven.kafka.connect.opensearch.OpensearchSinkSuperbetConnector",
+                Map.of("connector.class", "io.aiven.kafka.connect.opensearch.OpensearchSinkSuperbetConnector", "topics",
                         "example-topic-name", "name", "test-connector-name"))
                 .errorCount(), 1);
     }

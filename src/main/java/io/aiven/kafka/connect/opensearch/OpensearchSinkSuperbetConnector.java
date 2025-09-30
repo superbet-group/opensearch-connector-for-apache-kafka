@@ -26,7 +26,7 @@ import org.apache.kafka.connect.connector.Task;
 import org.apache.kafka.connect.errors.ConnectException;
 import org.apache.kafka.connect.sink.SinkConnector;
 
-public class OpensearchSinkConnector extends SinkConnector {
+public class OpensearchSinkSuperbetConnector extends SinkConnector {
 
     private Map<String, String> configProperties;
 
@@ -42,7 +42,7 @@ public class OpensearchSinkConnector extends SinkConnector {
             // validation
             new OpensearchSinkConnectorConfig(props);
         } catch (final ConfigException e) {
-            throw new ConnectException("Couldn't start OpensearchSinkConnector due to configuration error", e);
+            throw new ConnectException("Couldn't start OpensearchSinkSuperbetConnector due to configuration error", e);
         }
     }
 

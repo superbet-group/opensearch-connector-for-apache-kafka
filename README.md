@@ -70,7 +70,7 @@ curl http://localhost:8083/connector-plugins | jq .
 [
   ...
   {
-    "class": "io.aiven.kafka.connect.opensearch.OpensearchSinkConnector",
+    "class": "io.aiven.kafka.connect.opensearch.OpensearchSinkSuperbetConnector",
     "type": "sink",
     "version": "3.3.0"
   },

@@ -99,7 +99,7 @@ public class AbstractKafkaConnectIT extends AbstractIT {
 
     static Map<String, String> connectorProperties(String topicName) {
         final var props = new HashMap<>(getDefaultProperties());
-        props.put(CONNECTOR_CLASS_CONFIG, OpensearchSinkConnector.class.getName());
+        props.put(CONNECTOR_CLASS_CONFIG, OpensearchSinkSuperbetConnector.class.getName());
         props.put(TOPICS_CONFIG, topicName);
         props.put(TASKS_MAX_CONFIG, Integer.toString(1));
         props.put(KEY_CONVERTER_CLASS_CONFIG, StringConverter.class.getName());
