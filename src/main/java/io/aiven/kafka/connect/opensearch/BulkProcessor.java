@@ -172,41 +172,42 @@ public class BulkProcessor {
         assert !unsentRecords.isEmpty();
         final int batchableSize = Math.min(batchSize, unsentRecords.size());
         final var batch = new ArrayList<DocWriteWrapper>(batchableSize);
-
-        long totalSize = 0L;
+//
+//        long totalSize = 0L;
         for (int i = 0; i < batchableSize; i++) {
-            final DocWriteWrapper current = unsentRecords.removeFirst();
-            final long documentBytes = current.docWriteRequest.ramBytesUsed();
-
-            if (documentBytes > maxBatchPayloadBytes) {
-                // when document size exceeds the maximum batch payload size, the behavior is configurable.
-                switch (behaviorOnLargeMessage) {
-                    case FAIL :
-                        LOGGER.error("Document size of {} exceeds the maximum batch payload size of {}. Stopping.",
-                                documentBytes, maxBatchPayloadBytes);
-                        throw new ConnectException("Single document size exceeds the maximum batch payload size.");
-                    case SKIP :
-                        LOGGER.warn("Document size of {} exceeds the maximum batch payload size of {}. "
-                                + "Document will be skipped.", documentBytes, maxBatchPayloadBytes);
-                        continue;
-                    case PASS :
-                    default :
-                        LOGGER.warn(
-                                "Document size of {} exceeds the maximum batch payload size of {}. "
-                                        + "Document will be passed. Try to tune this warning by setting value of "
-                                        + OpensearchSinkConnectorConfig.MAX_BATCH_PAYLOAD_BYTES_CONFIG,
-                                documentBytes, maxBatchPayloadBytes);
-                        break;
-                }
-            }
-
-            if (totalSize + documentBytes > maxBatchPayloadBytes) {
-                // if adding this record would exceed the max batch size, put it back and stop
-                unsentRecords.addFirst(current);
-                break;
-            }
-            totalSize += current.docWriteRequest.ramBytesUsed();
-            batch.add(current);
+            batch.add(unsentRecords.removeFirst());
+//            final DocWriteWrapper current = unsentRecords.removeFirst();
+//            final long documentBytes = current.docWriteRequest.ramBytesUsed();
+//
+//            if (documentBytes > maxBatchPayloadBytes) {
+//                // when document size exceeds the maximum batch payload size, the behavior is configurable.
+//                switch (behaviorOnLargeMessage) {
+//                    case FAIL :
+//                        LOGGER.error("Document size of {} exceeds the maximum batch payload size of {}. Stopping.",
+//                                documentBytes, maxBatchPayloadBytes);
+//                        throw new ConnectException("Single document size exceeds the maximum batch payload size.");
+//                    case SKIP :
+//                        LOGGER.warn("Document size of {} exceeds the maximum batch payload size of {}. "
+//                                + "Document will be skipped.", documentBytes, maxBatchPayloadBytes);
+//                        continue;
+//                    case PASS :
+//                    default :
+//                        LOGGER.warn(
+//                                "Document size of {} exceeds the maximum batch payload size of {}. "
+//                                        + "Document will be passed. Try to tune this warning by setting value of "
+//                                        + OpensearchSinkConnectorConfig.MAX_BATCH_PAYLOAD_BYTES_CONFIG,
+//                                documentBytes, maxBatchPayloadBytes);
+//                        break;
+//                }
+//            }
+//
+//            if (totalSize + documentBytes > maxBatchPayloadBytes) {
+//                // if adding this record would exceed the max batch size, put it back and stop
+//                unsentRecords.addFirst(current);
+//                break;
+//            }
+//            totalSize += current.docWriteRequest.ramBytesUsed();
+//            batch.add(current);
         }
         inFlightRecords += batchableSize;
 
@@ -327,6 +328,32 @@ public class BulkProcessor {
     public synchronized void add(final DocWriteRequest<?> docWriteRequests, final SinkRecord sinkRecord,
             final long timeoutMs) {
         throwIfTerminal();
+
+        // Calculate the current total size of buffered records
+        long currentTotalSize =  unsentRecords.stream().mapToLong(r -> r.getDocWriteRequest().ramBytesUsed()).sum();
+
+        // get current record size
+        long currentRecordSize = docWriteRequests.ramBytesUsed();
+
+        // Check if adding the new record exceeds the max batch payload size
+        if (currentTotalSize + currentRecordSize > maxBatchPayloadBytes) {
+            switch (behaviorOnLargeMessage) {
+                case FAIL:
+                    LOGGER.error("Adding document of size {} exceeds the maximum batch payload size of {}. Stopping.",
+                            currentRecordSize, maxBatchPayloadBytes);
+                    throw new ConnectException("Adding document exceeds the maximum batch payload size.");
+                case SKIP:
+                    LOGGER.warn("Adding document of size {} exceeds the maximum batch payload size of {}. Skipping.",
+                            currentRecordSize, maxBatchPayloadBytes);
+                    return;
+                case PASS:
+                default:
+                    LOGGER.warn("Adding document of size {} exceeds the maximum batch payload size of {}. Passing.",
+                            currentRecordSize, maxBatchPayloadBytes);
+                    break;
+            }
+        }
+
 
         if (bufferedRecords() >= maxBufferedRecords) {
             final long addStartTimeMs = time.milliseconds();
