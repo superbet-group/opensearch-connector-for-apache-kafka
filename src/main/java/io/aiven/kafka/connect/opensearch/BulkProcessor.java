@@ -175,7 +175,6 @@ public class BulkProcessor {
 
         long totalSize = 0L;
         for (int i = 0; i < batchableSize; i++) {
-            batch.add(unsentRecords.removeFirst());
             final DocWriteWrapper current = unsentRecords.removeFirst();
             final long documentBytes = current.docWriteRequest.ramBytesUsed();
 
