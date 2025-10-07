@@ -346,7 +346,13 @@ public class BulkProcessor {
                     LOGGER.warn("Adding document {}/{} of size {} exceeds the maximum batch payload size of {}. Skipping.",
                             sinkRecord.kafkaPartition(),sinkRecord.kafkaOffset(),
                             currentRecordSize, maxBatchPayloadBytes);
-                    return;
+                    final long addStartTimeMs = time.milliseconds();
+                    wait(timeoutMs, addStartTimeMs);
+                    throwIfTerminal();
+                    if (bufferedRecords() >= maxBufferedRecords) {
+                        throw new ConnectException("Add timeout expired before buffer availability");
+                    };
+                    //return;
                 case PASS:
                 default:
                     LOGGER.warn("Adding document of size {} exceeds the maximum batch payload size of {}. Passing.",
@@ -358,14 +364,7 @@ public class BulkProcessor {
 
         if (bufferedRecords() >= maxBufferedRecords) {
             final long addStartTimeMs = time.milliseconds();
-            for (long elapsedMs = time.milliseconds() - addStartTimeMs; !isTerminal() && elapsedMs < timeoutMs
-                    && bufferedRecords() >= maxBufferedRecords; elapsedMs = time.milliseconds() - addStartTimeMs) {
-                try {
-                    wait(timeoutMs - elapsedMs);
-                } catch (final InterruptedException e) {
-                    throw new ConnectException(e);
-                }
-            }
+            wait(timeoutMs, addStartTimeMs);
             throwIfTerminal();
             if (bufferedRecords() >= maxBufferedRecords) {
                 throw new ConnectException("Add timeout expired before buffer availability");
@@ -374,6 +373,17 @@ public class BulkProcessor {
 
         unsentRecords.addLast(new DocWriteWrapper(docWriteRequests, sinkRecord));
         notifyAll();
+    }
+
+    private void wait(long timeoutMs, long addStartTimeMs) {
+        for (long elapsedMs = time.milliseconds() - addStartTimeMs; !isTerminal() && elapsedMs < timeoutMs
+                && bufferedRecords() >= maxBufferedRecords; elapsedMs = time.milliseconds() - addStartTimeMs) {
+            try {
+                wait(timeoutMs - elapsedMs);
+            } catch (final InterruptedException e) {
+                throw new ConnectException(e);
+            }
+        }
     }
 
     /**
