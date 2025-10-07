@@ -349,9 +349,6 @@ public class BulkProcessor {
                     final long addStartTimeMs = time.milliseconds();
                     wait(timeoutMs, addStartTimeMs);
                     throwIfTerminal();
-                    if (bufferedRecords() >= maxBufferedRecords) {
-                        throw new ConnectException("Add timeout expired before buffer availability");
-                    };
                     break;
                 case PASS:
                 default:
