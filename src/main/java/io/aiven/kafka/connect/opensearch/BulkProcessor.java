@@ -352,7 +352,7 @@ public class BulkProcessor {
                     if (bufferedRecords() >= maxBufferedRecords) {
                         throw new ConnectException("Add timeout expired before buffer availability");
                     };
-                    //return;
+                    break;
                 case PASS:
                 default:
                     LOGGER.warn("Adding document of size {} exceeds the maximum batch payload size of {}. Passing.",
