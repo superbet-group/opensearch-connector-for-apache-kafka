@@ -188,7 +188,6 @@ public class BulkProcessor {
                     case SKIP :
                         LOGGER.warn("Document size of {} exceeds the maximum batch payload size of {}. "
                                 + "Document will be skipped.", documentBytes, maxBatchPayloadBytes);
-                        unsentRecords.removeFirst();
                         continue;
                     case PASS :
                     default :
@@ -346,10 +345,7 @@ public class BulkProcessor {
                     LOGGER.warn("Adding document {}/{} of size {} exceeds the maximum batch payload size of {}. Skipping.",
                             sinkRecord.kafkaPartition(),sinkRecord.kafkaOffset(),
                             currentRecordSize, maxBatchPayloadBytes);
-                    final long addStartTimeMs = time.milliseconds();
-                    wait(timeoutMs, addStartTimeMs);
-                    throwIfTerminal();
-                    break;
+                    return;
                 case PASS:
                 default:
                     LOGGER.warn("Adding document of size {} exceeds the maximum batch payload size of {}. Passing.",
