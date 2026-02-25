@@ -524,6 +524,39 @@ public class BulkProcessorTest {
     }
 
     /**
+     * Regression guard: inFlightRecords must be incremented by the number of records actually added to the batch, not
+     * by the number dequeued from unsentRecords. When SKIP drops records inside submitBatch(), the over-count caused
+     * bufferedRecords() to never reach 0, making flush() time out indefinitely.
+     */
+    @Test
+    public void skipInSubmitBatchDoesNotInflateInFlightCount(final @Mock RestHighLevelClient client)
+            throws IOException {
+        // 1-byte limit — add() drops every record immediately under SKIP, so the queue stays empty
+        // and flush() must return without hanging regardless of any inFlightRecords accounting.
+        final var config = new OpensearchSinkConnectorConfig(
+                Map.of(CONNECTION_URL_CONFIG, "http://localhost", MAX_BUFFERED_RECORDS_CONFIG, "100",
+                        MAX_IN_FLIGHT_REQUESTS_CONFIG, "1", BATCH_SIZE_CONFIG, "10", LINGER_MS_CONFIG, "100000",
+                        MAX_RETRIES_CONFIG, "0", READ_TIMEOUT_MS_CONFIG, "0", BEHAVIOR_ON_MALFORMED_DOCS_CONFIG,
+                        BehaviorOnMalformedDoc.DEFAULT.toString(), MAX_BATCH_PAYLOAD_BYTES_CONFIG, "1",
+                        BEHAVIOR_ON_LARGE_MESSAGE_CONFIG, BehaviorOnLargeMessage.SKIP.toString()));
+        final var bulkProcessor = new BulkProcessor(Time.SYSTEM, client, config);
+
+        bulkProcessor.start();
+
+        bulkProcessor.add(newIndexRequest(1), newSinkRecord(), 10);
+        bulkProcessor.add(newIndexRequest(2), newSinkRecord(), 10);
+        bulkProcessor.add(newIndexRequest(3), newSinkRecord(), 10);
+
+        assertEquals(0, bulkProcessor.bufferedRecords());
+
+        // Before the fix, inFlightRecords was inflated by batchableSize instead of batch.size(),
+        // causing this flush to time out with "unflushed records: N".
+        bulkProcessor.flush(1000);
+
+        verify(client, never()).bulk(any(BulkRequest.class), eq(RequestOptions.DEFAULT));
+    }
+
+    /**
      * With PASS behavior, a record whose size exceeds maxBatchPayloadBytes must still be buffered so that it can be
      * sent to OpenSearch (regression guard).
      */

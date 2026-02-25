@@ -208,7 +208,7 @@ public class BulkProcessor {
             totalSize += current.docWriteRequest.ramBytesUsed();
             batch.add(current);
         }
-        inFlightRecords += batchableSize;
+        inFlightRecords += batch.size();
 
         return executor.submit(new BulkTask(batch, maxRetries, retryBackoffMs));
     }
