@@ -15,12 +15,15 @@
  */
 package io.aiven.kafka.connect.opensearch;
 
+import static io.aiven.kafka.connect.opensearch.BulkProcessor.BehaviorOnLargeMessage;
 import static io.aiven.kafka.connect.opensearch.BulkProcessor.BehaviorOnMalformedDoc;
 import static io.aiven.kafka.connect.opensearch.OpensearchSinkConnectorConfig.BATCH_SIZE_CONFIG;
+import static io.aiven.kafka.connect.opensearch.OpensearchSinkConnectorConfig.BEHAVIOR_ON_LARGE_MESSAGE_CONFIG;
 import static io.aiven.kafka.connect.opensearch.OpensearchSinkConnectorConfig.BEHAVIOR_ON_MALFORMED_DOCS_CONFIG;
 import static io.aiven.kafka.connect.opensearch.OpensearchSinkConnectorConfig.BEHAVIOR_ON_VERSION_CONFLICT_CONFIG;
 import static io.aiven.kafka.connect.opensearch.OpensearchSinkConnectorConfig.CONNECTION_URL_CONFIG;
 import static io.aiven.kafka.connect.opensearch.OpensearchSinkConnectorConfig.LINGER_MS_CONFIG;
+import static io.aiven.kafka.connect.opensearch.OpensearchSinkConnectorConfig.MAX_BATCH_PAYLOAD_BYTES_CONFIG;
 import static io.aiven.kafka.connect.opensearch.OpensearchSinkConnectorConfig.MAX_BUFFERED_RECORDS_CONFIG;
 import static io.aiven.kafka.connect.opensearch.OpensearchSinkConnectorConfig.MAX_IN_FLIGHT_REQUESTS_CONFIG;
 import static io.aiven.kafka.connect.opensearch.OpensearchSinkConnectorConfig.MAX_RETRIES_CONFIG;
@@ -466,6 +469,78 @@ public class BulkProcessorTest {
 
         assertTrue(clientAnswer.expectationsMet());
         verify(dlqReporter, never()).report(any(SinkRecord.class), any(Throwable.class));
+    }
+
+    /**
+     * With SKIP behavior, a record whose size exceeds maxBatchPayloadBytes must not be added to
+     * the unsent buffer — add() must return without buffering it.
+     */
+    @Test
+    public void skipLargeMessageInAdd(final @Mock RestHighLevelClient client) {
+        // Use a tiny limit so that any real IndexRequest will exceed it.
+        final var config = new OpensearchSinkConnectorConfig(Map.of(CONNECTION_URL_CONFIG, "http://localhost",
+                MAX_BUFFERED_RECORDS_CONFIG, "100", MAX_IN_FLIGHT_REQUESTS_CONFIG, "1", BATCH_SIZE_CONFIG, "10",
+                LINGER_MS_CONFIG, "10000", MAX_RETRIES_CONFIG, "0", READ_TIMEOUT_MS_CONFIG, "0",
+                BEHAVIOR_ON_MALFORMED_DOCS_CONFIG, BehaviorOnMalformedDoc.DEFAULT.toString(),
+                MAX_BATCH_PAYLOAD_BYTES_CONFIG, "1",
+                BEHAVIOR_ON_LARGE_MESSAGE_CONFIG, BehaviorOnLargeMessage.SKIP.toString()));
+        final var bulkProcessor = new BulkProcessor(Time.SYSTEM, client, config);
+
+        bulkProcessor.add(newIndexRequest(42), newSinkRecord(), 10);
+
+        assertEquals(0, bulkProcessor.bufferedRecords(),
+                "oversized record must be dropped silently when behavior is SKIP");
+    }
+
+    /**
+     * With SKIP behavior, skipping multiple oversized records must not corrupt the buffer count.
+     * After skipping N records the processor must remain usable and still be able to accept and
+     * flush normal-sized records (regression guard for the add() SKIP fix that changed break→return).
+     */
+    @Test
+    public void skipLargeMessageLeavesProcessorUsable(final @Mock RestHighLevelClient client) throws IOException {
+        // Limit is 1 byte — every document will be treated as oversized.
+        final var config = new OpensearchSinkConnectorConfig(Map.of(CONNECTION_URL_CONFIG, "http://localhost",
+                MAX_BUFFERED_RECORDS_CONFIG, "100", MAX_IN_FLIGHT_REQUESTS_CONFIG, "1", BATCH_SIZE_CONFIG, "10",
+                LINGER_MS_CONFIG, "100000", MAX_RETRIES_CONFIG, "0", READ_TIMEOUT_MS_CONFIG, "0",
+                BEHAVIOR_ON_MALFORMED_DOCS_CONFIG, BehaviorOnMalformedDoc.DEFAULT.toString(),
+                MAX_BATCH_PAYLOAD_BYTES_CONFIG, "1",
+                BEHAVIOR_ON_LARGE_MESSAGE_CONFIG, BehaviorOnLargeMessage.SKIP.toString()));
+        final var bulkProcessor = new BulkProcessor(Time.SYSTEM, client, config);
+
+        bulkProcessor.start();
+
+        // Three oversized records — all skipped, none buffered.
+        final int addTimeoutMs = 10;
+        bulkProcessor.add(newIndexRequest(1), newSinkRecord(), addTimeoutMs);
+        bulkProcessor.add(newIndexRequest(2), newSinkRecord(), addTimeoutMs);
+        bulkProcessor.add(newIndexRequest(3), newSinkRecord(), addTimeoutMs);
+
+        assertEquals(0, bulkProcessor.bufferedRecords(),
+                "all oversized records must be silently dropped; buffer must remain empty");
+
+        // The client must never be invoked since nothing was buffered.
+        verify(client, never()).bulk(any(BulkRequest.class), eq(RequestOptions.DEFAULT));
+    }
+
+    /**
+     * With PASS behavior, a record whose size exceeds maxBatchPayloadBytes must still be buffered
+     * so that it can be sent to OpenSearch (regression guard).
+     */
+    @Test
+    public void passLargeMessageIsBuffered(final @Mock RestHighLevelClient client) {
+        final var config = new OpensearchSinkConnectorConfig(Map.of(CONNECTION_URL_CONFIG, "http://localhost",
+                MAX_BUFFERED_RECORDS_CONFIG, "100", MAX_IN_FLIGHT_REQUESTS_CONFIG, "1", BATCH_SIZE_CONFIG, "10",
+                LINGER_MS_CONFIG, "10000", MAX_RETRIES_CONFIG, "0", READ_TIMEOUT_MS_CONFIG, "0",
+                BEHAVIOR_ON_MALFORMED_DOCS_CONFIG, BehaviorOnMalformedDoc.DEFAULT.toString(),
+                MAX_BATCH_PAYLOAD_BYTES_CONFIG, "1",
+                BEHAVIOR_ON_LARGE_MESSAGE_CONFIG, BehaviorOnLargeMessage.PASS.toString()));
+        final var bulkProcessor = new BulkProcessor(Time.SYSTEM, client, config);
+
+        bulkProcessor.add(newIndexRequest(42), newSinkRecord(), 10);
+
+        assertEquals(1, bulkProcessor.bufferedRecords(),
+                "oversized record must still be buffered when behavior is PASS");
     }
 
     private SinkRecord newSinkRecord() {
