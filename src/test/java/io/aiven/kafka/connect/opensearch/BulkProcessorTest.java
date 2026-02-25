@@ -472,18 +472,18 @@ public class BulkProcessorTest {
     }
 
     /**
-     * With SKIP behavior, a record whose size exceeds maxBatchPayloadBytes must not be added to
-     * the unsent buffer — add() must return without buffering it.
+     * With SKIP behavior, a record whose size exceeds maxBatchPayloadBytes must not be added to the unsent buffer —
+     * add() must return without buffering it.
      */
     @Test
     public void skipLargeMessageInAdd(final @Mock RestHighLevelClient client) {
         // Use a tiny limit so that any real IndexRequest will exceed it.
-        final var config = new OpensearchSinkConnectorConfig(Map.of(CONNECTION_URL_CONFIG, "http://localhost",
-                MAX_BUFFERED_RECORDS_CONFIG, "100", MAX_IN_FLIGHT_REQUESTS_CONFIG, "1", BATCH_SIZE_CONFIG, "10",
-                LINGER_MS_CONFIG, "10000", MAX_RETRIES_CONFIG, "0", READ_TIMEOUT_MS_CONFIG, "0",
-                BEHAVIOR_ON_MALFORMED_DOCS_CONFIG, BehaviorOnMalformedDoc.DEFAULT.toString(),
-                MAX_BATCH_PAYLOAD_BYTES_CONFIG, "1",
-                BEHAVIOR_ON_LARGE_MESSAGE_CONFIG, BehaviorOnLargeMessage.SKIP.toString()));
+        final var config = new OpensearchSinkConnectorConfig(
+                Map.of(CONNECTION_URL_CONFIG, "http://localhost", MAX_BUFFERED_RECORDS_CONFIG, "100",
+                        MAX_IN_FLIGHT_REQUESTS_CONFIG, "1", BATCH_SIZE_CONFIG, "10", LINGER_MS_CONFIG, "10000",
+                        MAX_RETRIES_CONFIG, "0", READ_TIMEOUT_MS_CONFIG, "0", BEHAVIOR_ON_MALFORMED_DOCS_CONFIG,
+                        BehaviorOnMalformedDoc.DEFAULT.toString(), MAX_BATCH_PAYLOAD_BYTES_CONFIG, "1",
+                        BEHAVIOR_ON_LARGE_MESSAGE_CONFIG, BehaviorOnLargeMessage.SKIP.toString()));
         final var bulkProcessor = new BulkProcessor(Time.SYSTEM, client, config);
 
         bulkProcessor.add(newIndexRequest(42), newSinkRecord(), 10);
@@ -493,19 +493,19 @@ public class BulkProcessorTest {
     }
 
     /**
-     * With SKIP behavior, skipping multiple oversized records must not corrupt the buffer count.
-     * After skipping N records the processor must remain usable and still be able to accept and
-     * flush normal-sized records (regression guard for the add() SKIP fix that changed break→return).
+     * With SKIP behavior, skipping multiple oversized records must not corrupt the buffer count. After skipping N
+     * records the processor must remain usable and still be able to accept and flush normal-sized records (regression
+     * guard for the add() SKIP fix that changed break→return).
      */
     @Test
     public void skipLargeMessageLeavesProcessorUsable(final @Mock RestHighLevelClient client) throws IOException {
         // Limit is 1 byte — every document will be treated as oversized.
-        final var config = new OpensearchSinkConnectorConfig(Map.of(CONNECTION_URL_CONFIG, "http://localhost",
-                MAX_BUFFERED_RECORDS_CONFIG, "100", MAX_IN_FLIGHT_REQUESTS_CONFIG, "1", BATCH_SIZE_CONFIG, "10",
-                LINGER_MS_CONFIG, "100000", MAX_RETRIES_CONFIG, "0", READ_TIMEOUT_MS_CONFIG, "0",
-                BEHAVIOR_ON_MALFORMED_DOCS_CONFIG, BehaviorOnMalformedDoc.DEFAULT.toString(),
-                MAX_BATCH_PAYLOAD_BYTES_CONFIG, "1",
-                BEHAVIOR_ON_LARGE_MESSAGE_CONFIG, BehaviorOnLargeMessage.SKIP.toString()));
+        final var config = new OpensearchSinkConnectorConfig(
+                Map.of(CONNECTION_URL_CONFIG, "http://localhost", MAX_BUFFERED_RECORDS_CONFIG, "100",
+                        MAX_IN_FLIGHT_REQUESTS_CONFIG, "1", BATCH_SIZE_CONFIG, "10", LINGER_MS_CONFIG, "100000",
+                        MAX_RETRIES_CONFIG, "0", READ_TIMEOUT_MS_CONFIG, "0", BEHAVIOR_ON_MALFORMED_DOCS_CONFIG,
+                        BehaviorOnMalformedDoc.DEFAULT.toString(), MAX_BATCH_PAYLOAD_BYTES_CONFIG, "1",
+                        BEHAVIOR_ON_LARGE_MESSAGE_CONFIG, BehaviorOnLargeMessage.SKIP.toString()));
         final var bulkProcessor = new BulkProcessor(Time.SYSTEM, client, config);
 
         bulkProcessor.start();
@@ -524,17 +524,17 @@ public class BulkProcessorTest {
     }
 
     /**
-     * With PASS behavior, a record whose size exceeds maxBatchPayloadBytes must still be buffered
-     * so that it can be sent to OpenSearch (regression guard).
+     * With PASS behavior, a record whose size exceeds maxBatchPayloadBytes must still be buffered so that it can be
+     * sent to OpenSearch (regression guard).
      */
     @Test
     public void passLargeMessageIsBuffered(final @Mock RestHighLevelClient client) {
-        final var config = new OpensearchSinkConnectorConfig(Map.of(CONNECTION_URL_CONFIG, "http://localhost",
-                MAX_BUFFERED_RECORDS_CONFIG, "100", MAX_IN_FLIGHT_REQUESTS_CONFIG, "1", BATCH_SIZE_CONFIG, "10",
-                LINGER_MS_CONFIG, "10000", MAX_RETRIES_CONFIG, "0", READ_TIMEOUT_MS_CONFIG, "0",
-                BEHAVIOR_ON_MALFORMED_DOCS_CONFIG, BehaviorOnMalformedDoc.DEFAULT.toString(),
-                MAX_BATCH_PAYLOAD_BYTES_CONFIG, "1",
-                BEHAVIOR_ON_LARGE_MESSAGE_CONFIG, BehaviorOnLargeMessage.PASS.toString()));
+        final var config = new OpensearchSinkConnectorConfig(
+                Map.of(CONNECTION_URL_CONFIG, "http://localhost", MAX_BUFFERED_RECORDS_CONFIG, "100",
+                        MAX_IN_FLIGHT_REQUESTS_CONFIG, "1", BATCH_SIZE_CONFIG, "10", LINGER_MS_CONFIG, "10000",
+                        MAX_RETRIES_CONFIG, "0", READ_TIMEOUT_MS_CONFIG, "0", BEHAVIOR_ON_MALFORMED_DOCS_CONFIG,
+                        BehaviorOnMalformedDoc.DEFAULT.toString(), MAX_BATCH_PAYLOAD_BYTES_CONFIG, "1",
+                        BEHAVIOR_ON_LARGE_MESSAGE_CONFIG, BehaviorOnLargeMessage.PASS.toString()));
         final var bulkProcessor = new BulkProcessor(Time.SYSTEM, client, config);
 
         bulkProcessor.add(newIndexRequest(42), newSinkRecord(), 10);

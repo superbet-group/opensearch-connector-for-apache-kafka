@@ -329,7 +329,7 @@ public class BulkProcessor {
         throwIfTerminal();
 
         // Calculate the current total size of buffered records
-        long currentTotalSize =  unsentRecords.stream().mapToLong(r -> r.getDocWriteRequest().ramBytesUsed()).sum();
+        long currentTotalSize = unsentRecords.stream().mapToLong(r -> r.getDocWriteRequest().ramBytesUsed()).sum();
 
         // get current record size
         long currentRecordSize = docWriteRequests.ramBytesUsed();
@@ -337,23 +337,23 @@ public class BulkProcessor {
         // Check if adding the new record exceeds the max batch payload size
         if (currentTotalSize + currentRecordSize > maxBatchPayloadBytes) {
             switch (behaviorOnLargeMessage) {
-                case FAIL:
+                case FAIL :
                     LOGGER.error("Adding document of size {} exceeds the maximum batch payload size of {}. Stopping.",
                             currentRecordSize, maxBatchPayloadBytes);
                     throw new ConnectException("Adding document exceeds the maximum batch payload size.");
-                case SKIP:
-                    LOGGER.warn("Adding document {}/{} of size {} exceeds the maximum batch payload size of {}. Skipping.",
-                            sinkRecord.kafkaPartition(),sinkRecord.kafkaOffset(),
-                            currentRecordSize, maxBatchPayloadBytes);
+                case SKIP :
+                    LOGGER.warn(
+                            "Adding document {}/{} of size {} exceeds the maximum batch payload size of {}. Skipping.",
+                            sinkRecord.kafkaPartition(), sinkRecord.kafkaOffset(), currentRecordSize,
+                            maxBatchPayloadBytes);
                     return;
-                case PASS:
-                default:
+                case PASS :
+                default :
                     LOGGER.warn("Adding document of size {} exceeds the maximum batch payload size of {}. Passing.",
                             currentRecordSize, maxBatchPayloadBytes);
                     break;
             }
         }
-
 
         if (bufferedRecords() >= maxBufferedRecords) {
             final long addStartTimeMs = time.milliseconds();
