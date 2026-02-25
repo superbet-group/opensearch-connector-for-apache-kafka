@@ -24,6 +24,7 @@ import java.util.Deque;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -205,9 +206,17 @@ public class BulkProcessor {
                 unsentRecords.addFirst(current);
                 break;
             }
-            totalSize += current.docWriteRequest.ramBytesUsed();
+            totalSize += documentBytes;
             batch.add(current);
         }
+
+        // All dequeued records were individually oversized and skipped via SKIP behavior.
+        // Nothing to submit — return a completed future so the caller contract is satisfied
+        // without burning a batch ID or sending an empty BulkRequest to OpenSearch.
+        if (batch.isEmpty()) {
+            return CompletableFuture.completedFuture(new BulkResponse(new BulkItemResponse[] {}, 0));
+        }
+
         inFlightRecords += batch.size();
 
         return executor.submit(new BulkTask(batch, maxRetries, retryBackoffMs));
@@ -328,14 +337,14 @@ public class BulkProcessor {
             final long timeoutMs) {
         throwIfTerminal();
 
-        // Calculate the current total size of buffered records
-        long currentTotalSize = unsentRecords.stream().mapToLong(r -> r.getDocWriteRequest().ramBytesUsed()).sum();
+        // Check if this individual record exceeds the per-batch payload limit.
+        // We intentionally check only this record's size, not the total buffer size,
+        // because maxBatchPayloadBytes is a per-batch limit and the buffer can legitimately
+        // hold more data than a single batch. Checking the cumulative buffer total would
+        // falsely skip valid records once the buffer fills past the limit.
+        final long currentRecordSize = docWriteRequests.ramBytesUsed();
 
-        // get current record size
-        long currentRecordSize = docWriteRequests.ramBytesUsed();
-
-        // Check if adding the new record exceeds the max batch payload size
-        if (currentTotalSize + currentRecordSize > maxBatchPayloadBytes) {
+        if (currentRecordSize > maxBatchPayloadBytes) {
             switch (behaviorOnLargeMessage) {
                 case FAIL :
                     LOGGER.error("Adding document of size {} exceeds the maximum batch payload size of {}. Stopping.",
@@ -389,12 +398,20 @@ public class BulkProcessor {
         LOGGER.trace("flush {}", timeoutMs);
         final long flushStartTimeMs = time.milliseconds();
         try {
-            flushRequested = true;
             synchronized (this) {
+                // Set flushRequested inside the synchronized block so the farmer thread cannot
+                // miss the state change between our notifyAll() and our wait() below.
+                flushRequested = true;
                 notifyAll();
                 for (long elapsedMs = time.milliseconds() - flushStartTimeMs; !isTerminal() && elapsedMs < timeoutMs
                         && bufferedRecords() > 0; elapsedMs = time.milliseconds() - flushStartTimeMs) {
-                    wait(timeoutMs - elapsedMs);
+                    final long remaining = timeoutMs - elapsedMs;
+                    // Guard against negative remaining time due to scheduling jitter: wait(negative)
+                    // throws IllegalArgumentException; wait(0) means wait indefinitely in Java.
+                    if (remaining <= 0) {
+                        break;
+                    }
+                    wait(remaining);
                 }
                 throwIfTerminal();
                 if (bufferedRecords() > 0) {
@@ -404,7 +421,12 @@ public class BulkProcessor {
         } catch (final InterruptedException e) {
             throw new ConnectException(e);
         } finally {
-            flushRequested = false;
+            // Clear flushRequested under the monitor so the farmer never observes a stale
+            // true value after flush has already completed.
+            synchronized (this) {
+                flushRequested = false;
+                notifyAll();
+            }
         }
     }
 
