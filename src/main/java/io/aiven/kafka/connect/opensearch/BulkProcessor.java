@@ -186,7 +186,7 @@ public class BulkProcessor {
                                 documentBytes, maxBatchPayloadBytes);
                         throw new ConnectException("Single document size exceeds the maximum batch payload size.");
                     case SKIP :
-                        LOGGER.warn("Document size of {} exceeds the maximum batch payload size of {}. "
+                        LOGGER.debug("Document size of {} exceeds the maximum batch payload size of {}. "
                                 + "Document will be skipped.", documentBytes, maxBatchPayloadBytes);
                         continue;
                     case PASS :
@@ -342,7 +342,7 @@ public class BulkProcessor {
                             currentRecordSize, maxBatchPayloadBytes);
                     throw new ConnectException("Adding document exceeds the maximum batch payload size.");
                 case SKIP :
-                    LOGGER.warn(
+                    LOGGER.debug(
                             "Adding document {}/{} of size {} exceeds the maximum batch payload size of {}. Skipping.",
                             sinkRecord.kafkaPartition(), sinkRecord.kafkaOffset(), currentRecordSize,
                             maxBatchPayloadBytes);
