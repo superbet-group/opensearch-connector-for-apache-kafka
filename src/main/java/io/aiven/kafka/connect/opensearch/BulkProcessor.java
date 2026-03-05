@@ -47,6 +47,7 @@ import org.opensearch.action.bulk.BulkRequest;
 import org.opensearch.action.bulk.BulkResponse;
 import org.opensearch.client.RequestOptions;
 import org.opensearch.client.RestHighLevelClient;
+import org.opensearch.OpenSearchStatusException;
 import org.opensearch.core.rest.RestStatus;
 
 import org.slf4j.Logger;
@@ -505,6 +506,21 @@ public class BulkProcessor {
                         }
                     }
                     return response;
+                } catch (final OpenSearchStatusException e) {
+                    if (e.status() == RestStatus.REQUEST_ENTITY_TOO_LARGE) {
+                        // HTTP 413: the bulk payload exceeded OpenSearch's http.max_content_length limit.
+                        // Retrying the same batch will not help — the payload size won't change.
+                        // This is most likely caused by a rebalance flush spike where a task temporarily
+                        // absorbed extra partitions. The task-watcher will restart the task automatically.
+                        LOGGER.error(
+                                "Bulk request for batch {} of {} records rejected with 413 Request Entity Too Large."
+                                        + " Batch payload exceeded OpenSearch http.max_content_length limit."
+                                        + " Consider lowering batch.size or max.buffered.records.",
+                                batchId, batch.size(), e);
+                        throw new ConnectException("Bulk request rejected with 413 Request Entity Too Large", e);
+                    }
+                    LOGGER.error("Failed to send bulk request from batch {} of {} records", batchId, batch.size(), e);
+                    throw new RetriableError(e);
                 } catch (final IOException e) {
                     LOGGER.error("Failed to send bulk request from batch {} of {} records", batchId, batch.size(), e);
                     throw new RetriableError(e);
