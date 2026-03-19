@@ -44,10 +44,15 @@ import org.apache.hc.core5.ssl.SSLContextBuilder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-public record HttpClientConfigCallback(
-        OpenSearchSinkConnectorConfig config) implements ApacheHttpClient5TransportBuilder.HttpClientConfigCallback {
+public class HttpClientConfigCallback implements ApacheHttpClient5TransportBuilder.HttpClientConfigCallback {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(HttpClientConfigCallback.class);
+
+    private final OpenSearchSinkConnectorConfig config;
+
+    public HttpClientConfigCallback(final OpenSearchSinkConnectorConfig config) {
+        this.config = config;
+    }
 
     @Override
     public HttpAsyncClientBuilder customizeHttpClient(final HttpAsyncClientBuilder httpClientBuilder) {

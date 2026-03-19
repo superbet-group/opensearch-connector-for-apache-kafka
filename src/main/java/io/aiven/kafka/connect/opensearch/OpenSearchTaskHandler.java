@@ -75,6 +75,7 @@ public class OpenSearchTaskHandler {
         this.bulkIngester = BulkIngester.of(b -> b.client(client)
                 .backoffPolicy(BackoffPolicy.exponentialBackoff(config.retryBackoffMs(), config.maxRetry()))
                 .maxOperations(this.config.maxBufferedRecords())
+                .maxSize(this.config.maxBatchPayloadBytes())
                 .listener(new ConnectorBulkListener(config, errantRecordReporter)));
         this.bulkOperationBuilder = new BulkOperationBuilder(config);
     }
