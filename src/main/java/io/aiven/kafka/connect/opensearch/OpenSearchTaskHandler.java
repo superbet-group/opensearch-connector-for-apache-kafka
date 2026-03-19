@@ -113,6 +113,12 @@ public class OpenSearchTaskHandler {
 
     private void createIndex(final String indexName, final SinkRecord record) {
         try {
+            // Skip creation if the name already resolves as an alias — attempting to create
+            // an index whose name is taken by an alias raises invalid_index_name_exception.
+            if (client.indices().existsAlias(req -> req.name(indexName)).value()) {
+                LOGGER.info("Skipping index creation: {} already exists as an alias", indexName);
+                return;
+            }
             LOGGER.info("Creating index {}", indexName);
             final var createIndexRequestBuilder = CreateIndexRequest.builder().index(indexName);
             indexMapping(record).ifPresentOrElse(im -> createIndexRequestBuilder.mappings(m -> m.withJson(im)),
