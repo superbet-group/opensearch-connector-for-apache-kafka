@@ -105,7 +105,17 @@ distributions {
     main {
         contents {
             from jar
-            from configurations.runtimeClasspath
+            from(configurations.runtimeClasspath) {
+                // Exclude Jackson from the plugin bundle.
+                // Kafka Connect workers (Confluent Platform) already provide Jackson on the
+                // parent classloader. Bundling it here causes a ServiceLoader classloader
+                // conflict: Jdk8Module is loaded by the plugin classloader but the Module
+                // interface reference comes from the parent, so the subtype check fails with:
+                // "ServiceConfigurationError: Jdk8Module not a subtype"
+                exclude group: 'com.fasterxml.jackson.core'
+                exclude group: 'com.fasterxml.jackson.datatype'
+                exclude group: 'com.fasterxml.jackson.module'
+            }
         }
     }
 }
