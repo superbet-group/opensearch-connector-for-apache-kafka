@@ -145,6 +145,21 @@ public class OpenSearchSinkConnectorConfig extends AbstractConfig {
             + "milliseconds for the OpenSearch server to send a response. The task fails "
             + "if any read operation times out, and will need to be restarted to resume " + "further operations.";
 
+    public static final String MAX_BATCH_PAYLOAD_BYTES_CONFIG = "max.batch.payload.bytes";
+    private static final String MAX_BATCH_PAYLOAD_BYTES_DOC = "The maximum payload size in bytes for a single bulk "
+            + "request sent to OpenSearch. When the accumulated batch reaches this limit it is flushed and a new "
+            + "batch is started. Defaults to " + Integer.MAX_VALUE + " (effectively unlimited). "
+            + "Use together with ``" + "behavior.on.large.message" + "`` to control handling of individual records "
+            + "whose serialized size exceeds this limit.";
+
+    public static final String BEHAVIOR_ON_LARGE_MESSAGE_CONFIG = "behavior.on.large.message";
+    private static final String BEHAVIOR_ON_LARGE_MESSAGE_DOC = "How to handle records whose serialized JSON payload "
+            + "size exceeds ``" + MAX_BATCH_PAYLOAD_BYTES_CONFIG + "``. " + "Valid options are:\n"
+            + "- ``skip`` – discard the record silently (with a DEBUG log)\n"
+            + "- ``fail`` – stop the task with a ConnectException\n"
+            + "- ``pass`` – forward the record anyway; the bulk request may be rejected with HTTP 413\n"
+            + "Default is ``pass``.";
+
     public static final String BEHAVIOR_ON_NULL_VALUES_CONFIG = "behavior.on.null.values";
     private static final String BEHAVIOR_ON_NULL_VALUES_DOC = "How to handle records with a "
             + "non-null key and a null value (i.e. Kafka tombstone records). Valid options are "
@@ -277,7 +292,13 @@ public class OpenSearchSinkConnectorConfig extends AbstractConfig {
                 .define(CONNECTION_TIMEOUT_MS_CONFIG, Type.INT, 1000, Importance.LOW, CONNECTION_TIMEOUT_MS_CONFIG_DOC,
                         CONNECTOR_GROUP_NAME, ++order, Width.SHORT, "Connection Timeout")
                 .define(READ_TIMEOUT_MS_CONFIG, Type.INT, 3000, Importance.LOW, READ_TIMEOUT_MS_CONFIG_DOC,
-                        CONNECTOR_GROUP_NAME, ++order, Width.SHORT, "Read Timeout");
+                        CONNECTOR_GROUP_NAME, ++order, Width.SHORT, "Read Timeout")
+                .define(MAX_BATCH_PAYLOAD_BYTES_CONFIG, Type.LONG, (long) Integer.MAX_VALUE, Importance.MEDIUM,
+                        MAX_BATCH_PAYLOAD_BYTES_DOC, CONNECTOR_GROUP_NAME, ++order, Width.SHORT,
+                        "Max Batch Payload Bytes")
+                .define(BEHAVIOR_ON_LARGE_MESSAGE_CONFIG, Type.STRING, BehaviorOnLargeMessage.DEFAULT.toString(),
+                        BehaviorOnLargeMessage.VALIDATOR, Importance.MEDIUM, BEHAVIOR_ON_LARGE_MESSAGE_DOC,
+                        CONNECTOR_GROUP_NAME, ++order, Width.SHORT, "Behavior on large message");
     }
 
     private static void addSslConfig(final ConfigDef configDef) {
@@ -613,6 +634,14 @@ public class OpenSearchSinkConnectorConfig extends AbstractConfig {
 
     public boolean trustAllCertificates() {
         return getBoolean(SSL_CONFIG_PREFIX + SSL_CONFIG_TRUST_ALL_CERTIFICATES);
+    }
+
+    public long maxBatchPayloadBytes() {
+        return getLong(MAX_BATCH_PAYLOAD_BYTES_CONFIG);
+    }
+
+    public BehaviorOnLargeMessage behaviorOnLargeMessage() {
+        return BehaviorOnLargeMessage.forValue(getString(BEHAVIOR_ON_LARGE_MESSAGE_CONFIG));
     }
 
     public static void main(final String[] args) {

@@ -89,8 +89,8 @@ spotless {
 }
 
 java {
-    sourceCompatibility = JavaVersion.VERSION_21
-    targetCompatibility = JavaVersion.VERSION_21
+    sourceCompatibility = JavaVersion.VERSION_11
+    targetCompatibility = JavaVersion.VERSION_11
 }
 
 compileJava {
@@ -105,7 +105,15 @@ distributions {
     main {
         contents {
             from jar
-            from configurations.runtimeClasspath
+            from(configurations.runtimeClasspath) {
+                // Exclude Jackson from the plugin bundle.
+                // Kafka Connect workers (Confluent Platform) already provide Jackson on the
+                // parent classloader. Bundling it here causes a ServiceLoader classloader
+                // conflict: Jdk8Module is loaded by the plugin classloader but the Module
+                // interface reference comes from the parent, so the subtype check fails with:
+                // "ServiceConfigurationError: Jdk8Module not a subtype"
+                exclude '**/jackson-*.jar'
+            }
         }
     }
 }
@@ -154,7 +162,7 @@ ext {
 
     mockitoVersion = "5.22.0"
 
-    junitVersion = "6.0.3"
+    junitVersion = "5.11.4"
 
     testcontainersVersion = "2.0.3"
     openSearchTestcontainersVersion = "4.1.0"
@@ -205,7 +213,7 @@ dependencies {
     testImplementation "org.apache.kafka:connect-json:$kafkaVersion"
 
     testRuntimeOnly "org.slf4j:slf4j-log4j12:$slf4jVersion"
-    testRuntimeOnly "org.junit.platform:junit-platform-launcher:${junitVersion}"
+    testRuntimeOnly "org.junit.platform:junit-platform-launcher"
 
     integrationTestImplementation "org.testcontainers:testcontainers-junit-jupiter:$testcontainersVersion"
     integrationTestImplementation "org.testcontainers:testcontainers-kafka:$testcontainersVersion" // this is not Kafka version

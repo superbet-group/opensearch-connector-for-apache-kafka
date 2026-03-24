@@ -80,8 +80,8 @@ public class BulkOperationBuilderTest {
         assertTrue(indexBulkOperation.isIndex());
         assertNull(indexBulkOperation.index().id(), indexBulkOperation.index().id());
         assertEquals(VersionType.Internal, indexBulkOperation.index().versionType());
-        assertEquals("""
-                {"string":"value"}""", readPayload((ByteArrayBinaryData) indexBulkOperation.index().document()));
+        assertEquals("{\"string\":\"value\"}",
+                readPayload((ByteArrayBinaryData) indexBulkOperation.index().document()));
     }
 
     @Test
@@ -107,8 +107,7 @@ public class BulkOperationBuilderTest {
         assertEquals(String.format("%s+%s+%s", TOPIC, PARTITION, OFFSET), indexOperation.index().id(),
                 indexOperation.index().id());
         assertEquals(VersionType.Internal, indexOperation.index().versionType());
-        assertEquals("""
-                {"string":"value"}""", readPayload(((ByteArrayBinaryData) indexOperation.index().document())));
+        assertEquals("{\"string\":\"value\"}", readPayload(((ByteArrayBinaryData) indexOperation.index().document())));
     }
 
     @Test
@@ -133,8 +132,7 @@ public class BulkOperationBuilderTest {
         assertEquals(KEY, indexOperation.index().id());
         assertEquals(VersionType.External, indexOperation.index().versionType());
         assertEquals(OFFSET, indexOperation.index().version());
-        assertEquals("""
-                {"string":"value"}""", readPayload(((ByteArrayBinaryData) indexOperation.index().document())));
+        assertEquals("{\"string\":\"value\"}", readPayload(((ByteArrayBinaryData) indexOperation.index().document())));
     }
 
     @Test
@@ -161,10 +159,8 @@ public class BulkOperationBuilderTest {
                 .tryToReadFieldValue(data.getClass().getDeclaredField("upsert"), data)
                 .get());
 
-        assertEquals("""
-                {"string":"aaa"}""", documentPayload);
-        assertEquals("""
-                {"string":"aaa"}""", upsertPayload);
+        assertEquals("{\"string\":\"aaa\"}", documentPayload);
+        assertEquals("{\"string\":\"aaa\"}", upsertPayload);
     }
 
     @Test

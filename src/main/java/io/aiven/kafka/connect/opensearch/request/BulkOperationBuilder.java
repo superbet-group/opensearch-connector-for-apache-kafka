@@ -17,6 +17,7 @@ package io.aiven.kafka.connect.opensearch.request;
 
 import static java.util.Objects.isNull;
 
+import org.apache.kafka.connect.errors.ConnectException;
 import org.apache.kafka.connect.errors.DataException;
 import org.apache.kafka.connect.sink.SinkRecord;
 
@@ -90,6 +91,27 @@ public final class BulkOperationBuilder {
             bulkOperation = BulkOperation.of(b -> b.delete(deleteOperationBuilder.build()));
         } else {
             final var payload = DocumentPayload.buildPayload(config, record);
+            // Pre-flight check: if this single record exceeds max.batch.payload.bytes, apply behavior.on.large.message.
+            // This catches records that would never fit in any batch and avoids a guaranteed HTTP 413.
+            final long maxBatchPayloadBytes = config.maxBatchPayloadBytes();
+            if (payload.length > maxBatchPayloadBytes) {
+                switch (config.behaviorOnLargeMessage()) {
+                    case FAIL :
+                        LOGGER.error("Document size of {} bytes exceeds max.batch.payload.bytes of {} bytes. Stopping.",
+                                payload.length, maxBatchPayloadBytes);
+                        throw new ConnectException("Single document size " + payload.length
+                                + " bytes exceeds max.batch.payload.bytes " + maxBatchPayloadBytes);
+                    case SKIP :
+                        LOGGER.debug("Document {}/{} size {} bytes exceeds max.batch.payload.bytes {} bytes. Skipping.",
+                                record.kafkaPartition(), record.kafkaOffset(), payload.length, maxBatchPayloadBytes);
+                        return null;
+                    case PASS :
+                    default :
+                        LOGGER.warn("Document size of {} bytes exceeds max.batch.payload.bytes of {} bytes. Passing.",
+                                payload.length, maxBatchPayloadBytes);
+                        break;
+                }
+            }
             final var binaryData = BinaryData.of(payload, ContentType.APPLICATION_JSON);
             if (config.indexWriteMethod() == IndexWriteMethod.UPSERT) {
                 bulkOperation = BulkOperation.of(b -> b.update(u -> u.id(documentId)

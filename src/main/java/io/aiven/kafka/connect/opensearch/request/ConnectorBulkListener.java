@@ -18,6 +18,7 @@ package io.aiven.kafka.connect.opensearch.request;
 import java.util.List;
 import java.util.Set;
 
+import org.apache.kafka.connect.errors.ConnectException;
 import org.apache.kafka.connect.sink.ErrantRecordReporter;
 import org.apache.kafka.connect.sink.SinkRecord;
 
@@ -151,7 +152,33 @@ public final class ConnectorBulkListener implements BulkListener<SinkRecord> {
     }
 
     @Override
-    public void afterBulk(long executionId, BulkRequest request, List<SinkRecord> voids, Throwable failure) {
+    public void afterBulk(final long executionId, final BulkRequest request, final List<SinkRecord> records,
+            final Throwable failure) {
+        // HTTP 413 means the bulk payload exceeded OpenSearch's http.max_content_length limit.
+        // Retrying the same batch will not help — the payload size won't change.
+        // Throw ConnectException (non-retriable) so the task fails cleanly instead of looping forever.
+        if (is413(failure)) {
+            LOGGER.error("Bulk request for batch {} of {} records rejected with 413 Request Entity Too Large."
+                    + " The batch payload exceeded OpenSearch's http.max_content_length limit."
+                    + " Consider lowering max.batch.payload.bytes.", executionId, records.size());
+            throw new ConnectException("Bulk request rejected with 413 Request Entity Too Large", failure);
+        }
         LOGGER.error("Bulk {} has failed. Error is", executionId, failure);
+    }
+
+    /**
+     * Returns {@code true} when the failure (or any cause in its chain) is an HTTP 413 response. Uses message-string
+     * inspection to remain resilient against opensearch-java transport changes.
+     */
+    private boolean is413(final Throwable failure) {
+        if (failure == null) {
+            return false;
+        }
+        final String msg = failure.getMessage();
+        if (msg != null && (msg.contains("413") || msg.contains("Request Entity Too Large"))) {
+            return true;
+        }
+        // Recurse into cause chain (max depth bounded by JVM stack)
+        return failure.getCause() != null && failure.getCause() != failure && is413(failure.getCause());
     }
 }
