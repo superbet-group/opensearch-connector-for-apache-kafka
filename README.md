@@ -6,7 +6,7 @@ This repository includes Aiven's OpenSearch [Apache Kafka® Connector](http://ka
 Kafka®.
 
 The project originates from
-Aiven's [elasticsearch-connector-for-apache-kafka](https://github.com/aiven/elasticsearch-connector-for-apache-kafka).
+Aiven's [opensearch-connector-for-apache-kafka](https://github.com/aiven/elasticsearch-connector-for-apache-kafka).
 The code was forked and all classes were renamed.
 
 # Documentation
@@ -70,7 +70,7 @@ curl http://localhost:8083/connector-plugins | jq .
 [
   ...
   {
-    "class": "io.aiven.kafka.connect.opensearch.OpensearchSinkConnector",
+    "class": "io.aiven.kafka.connect.opensearch.OpenSearchSinkConnector",
     "type": "sink",
     "version": "3.3.0"
   },

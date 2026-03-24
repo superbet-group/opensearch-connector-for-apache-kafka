@@ -15,8 +15,22 @@
  */
 package io.aiven.kafka.connect.opensearch;
 
+import static org.apache.kafka.common.config.SslConfigs.SSL_CIPHER_SUITES_CONFIG;
+import static org.apache.kafka.common.config.SslConfigs.SSL_ENABLED_PROTOCOLS_CONFIG;
+import static org.apache.kafka.common.config.SslConfigs.SSL_ENDPOINT_IDENTIFICATION_ALGORITHM_CONFIG;
+import static org.apache.kafka.common.config.SslConfigs.SSL_KEYSTORE_LOCATION_CONFIG;
+import static org.apache.kafka.common.config.SslConfigs.SSL_KEYSTORE_PASSWORD_CONFIG;
+import static org.apache.kafka.common.config.SslConfigs.SSL_KEYSTORE_TYPE_CONFIG;
+import static org.apache.kafka.common.config.SslConfigs.SSL_KEY_PASSWORD_CONFIG;
+import static org.apache.kafka.common.config.SslConfigs.SSL_PROTOCOL_CONFIG;
+import static org.apache.kafka.common.config.SslConfigs.SSL_TRUSTSTORE_LOCATION_CONFIG;
+import static org.apache.kafka.common.config.SslConfigs.SSL_TRUSTSTORE_PASSWORD_CONFIG;
+import static org.apache.kafka.common.config.SslConfigs.SSL_TRUSTSTORE_TYPE_CONFIG;
+
 import java.net.MalformedURLException;
+import java.net.URISyntaxException;
 import java.net.URL;
+import java.nio.file.Path;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
@@ -33,16 +47,17 @@ import org.apache.kafka.common.config.ConfigDef.Importance;
 import org.apache.kafka.common.config.ConfigDef.Type;
 import org.apache.kafka.common.config.ConfigDef.Width;
 import org.apache.kafka.common.config.ConfigException;
+import org.apache.kafka.common.config.SslConfigs;
 
 import io.aiven.kafka.connect.opensearch.spi.ConfigDefContributor;
 
-import org.apache.http.HttpHost;
+import org.apache.hc.core5.http.HttpHost;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-public class OpensearchSinkConnectorConfig extends AbstractConfig {
+public class OpenSearchSinkConnectorConfig extends AbstractConfig {
 
-    private static final Logger LOGGER = LoggerFactory.getLogger(OpensearchSinkConnectorConfig.class);
+    private static final Logger LOGGER = LoggerFactory.getLogger(OpenSearchSinkConnectorConfig.class);
 
     public static final String CONNECTOR_GROUP_NAME = "Connector";
 
@@ -187,9 +202,17 @@ public class OpensearchSinkConnectorConfig extends AbstractConfig {
     public static final String DATA_STREAM_TIMESTAMP_FIELD_DOC = "The Kafka record field to use as "
             + "the timestamp for the @timestamp field in documents sent to a data stream. The default is @timestamp.";
 
+    private final static String SSL_SETTINGS_GROUP_NAME = "TLS Configuration for HTTPS";
+
+    public final static String SSL_CONFIG_PREFIX = "connection.";
+
+    public final static String SSL_CONFIG_TRUST_ALL_CERTIFICATES = "trust.all.certificates";
+    public final static String SSL_CONFIG_TRUST_ALL_CERTIFICATES_DOC = "Allow to trust all certificates. Default is false";
+
     protected static ConfigDef baseConfigDef() {
         final ConfigDef configDef = new ConfigDef();
         addConnectorConfigs(configDef);
+        addSslConfig(configDef);
         addConversionConfigs(configDef);
         addDataStreamConfig(configDef);
         addSpiConfigs(configDef);
@@ -205,7 +228,7 @@ public class OpensearchSinkConnectorConfig extends AbstractConfig {
      */
     private static void addSpiConfigs(final ConfigDef configDef) {
         final ServiceLoader<ConfigDefContributor> loaders = ServiceLoader.load(ConfigDefContributor.class,
-                OpensearchSinkConnectorConfig.class.getClassLoader());
+                OpenSearchSinkConnectorConfig.class.getClassLoader());
 
         final Iterator<ConfigDefContributor> iterator = loaders.iterator();
         while (iterator.hasNext()) {
@@ -257,6 +280,40 @@ public class OpensearchSinkConnectorConfig extends AbstractConfig {
                         CONNECTOR_GROUP_NAME, ++order, Width.SHORT, "Read Timeout");
     }
 
+    private static void addSslConfig(final ConfigDef configDef) {
+        ConfigDef sslConfigDef = new ConfigDef();
+        sslConfigDef
+                .define(SslConfigs.SSL_PROTOCOL_CONFIG, ConfigDef.Type.STRING, SslConfigs.DEFAULT_SSL_PROTOCOL,
+                        ConfigDef.Importance.MEDIUM, SslConfigs.SSL_PROTOCOL_DOC)
+                .define(SSL_CIPHER_SUITES_CONFIG, ConfigDef.Type.LIST, null, ConfigDef.Importance.LOW,
+                        SslConfigs.SSL_CIPHER_SUITES_DOC)
+                .define(SSL_ENABLED_PROTOCOLS_CONFIG, ConfigDef.Type.LIST, SslConfigs.DEFAULT_SSL_ENABLED_PROTOCOLS,
+                        ConfigDef.Importance.MEDIUM, SslConfigs.SSL_ENABLED_PROTOCOLS_DOC)
+                .define(SslConfigs.SSL_KEYSTORE_TYPE_CONFIG, ConfigDef.Type.STRING,
+                        SslConfigs.DEFAULT_SSL_KEYSTORE_TYPE, ConfigDef.Importance.MEDIUM,
+                        SslConfigs.SSL_KEYSTORE_TYPE_DOC)
+                .define(SslConfigs.SSL_KEYSTORE_LOCATION_CONFIG, ConfigDef.Type.STRING, null, ConfigDef.Importance.HIGH,
+                        SslConfigs.SSL_KEYSTORE_LOCATION_DOC)
+                .define(SslConfigs.SSL_KEYSTORE_PASSWORD_CONFIG, ConfigDef.Type.PASSWORD, null,
+                        ConfigDef.Importance.HIGH, SslConfigs.SSL_KEYSTORE_PASSWORD_DOC)
+                .define(SSL_KEY_PASSWORD_CONFIG, ConfigDef.Type.PASSWORD, null, ConfigDef.Importance.HIGH,
+                        SslConfigs.SSL_KEY_PASSWORD_DOC)
+                .define(SslConfigs.SSL_TRUSTSTORE_TYPE_CONFIG, ConfigDef.Type.STRING,
+                        SslConfigs.DEFAULT_SSL_TRUSTSTORE_TYPE, ConfigDef.Importance.MEDIUM,
+                        SslConfigs.SSL_TRUSTSTORE_TYPE_DOC)
+                .define(SslConfigs.SSL_TRUSTSTORE_LOCATION_CONFIG, ConfigDef.Type.STRING, null,
+                        ConfigDef.Importance.HIGH, SslConfigs.SSL_TRUSTSTORE_LOCATION_DOC)
+                .define(SslConfigs.SSL_TRUSTSTORE_PASSWORD_CONFIG, ConfigDef.Type.PASSWORD, null,
+                        ConfigDef.Importance.HIGH, SslConfigs.SSL_TRUSTSTORE_PASSWORD_DOC)
+                .define(SslConfigs.SSL_ENDPOINT_IDENTIFICATION_ALGORITHM_CONFIG, ConfigDef.Type.STRING,
+                        SslConfigs.DEFAULT_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM, ConfigDef.Importance.LOW,
+                        SslConfigs.SSL_ENDPOINT_IDENTIFICATION_ALGORITHM_DOC)
+                .define(SSL_CONFIG_TRUST_ALL_CERTIFICATES, Type.BOOLEAN, false, Importance.LOW,
+                        SSL_CONFIG_TRUST_ALL_CERTIFICATES_DOC);
+
+        configDef.embed(SSL_CONFIG_PREFIX, SSL_SETTINGS_GROUP_NAME, configDef.configKeys().size() + 1, sslConfigDef);
+    }
+
     private static void addConversionConfigs(final ConfigDef configDef) {
         int order = 0;
         configDef
@@ -279,18 +336,15 @@ public class OpensearchSinkConnectorConfig extends AbstractConfig {
                         DATA_CONVERSION_GROUP_NAME, ++order, Width.LONG, "Topics for 'Ignore Schema' mode")
                 .define(DROP_INVALID_MESSAGE_CONFIG, Type.BOOLEAN, false, Importance.LOW, DROP_INVALID_MESSAGE_DOC,
                         DATA_CONVERSION_GROUP_NAME, ++order, Width.LONG, "Drop invalid messages")
-                .define(BEHAVIOR_ON_NULL_VALUES_CONFIG, Type.STRING,
-                        RecordConverter.BehaviorOnNullValues.DEFAULT.toString(),
-                        RecordConverter.BehaviorOnNullValues.VALIDATOR, Importance.LOW, BEHAVIOR_ON_NULL_VALUES_DOC,
+                .define(BEHAVIOR_ON_NULL_VALUES_CONFIG, Type.STRING, BehaviorOnNullValues.DEFAULT.toString(),
+                        BehaviorOnNullValues.VALIDATOR, Importance.LOW, BEHAVIOR_ON_NULL_VALUES_DOC,
                         DATA_CONVERSION_GROUP_NAME, ++order, Width.SHORT, "Behavior for null-valued records")
-                .define(BEHAVIOR_ON_MALFORMED_DOCS_CONFIG, Type.STRING,
-                        BulkProcessor.BehaviorOnMalformedDoc.DEFAULT.toString(),
-                        BulkProcessor.BehaviorOnMalformedDoc.VALIDATOR, Importance.LOW, BEHAVIOR_ON_MALFORMED_DOCS_DOC,
+                .define(BEHAVIOR_ON_MALFORMED_DOCS_CONFIG, Type.STRING, BehaviorOnMalformedDoc.DEFAULT.toString(),
+                        BehaviorOnMalformedDoc.VALIDATOR, Importance.LOW, BEHAVIOR_ON_MALFORMED_DOCS_DOC,
                         DATA_CONVERSION_GROUP_NAME, ++order, Width.SHORT, "Behavior on malformed documents")
-                .define(BEHAVIOR_ON_VERSION_CONFLICT_CONFIG, Type.STRING,
-                        BulkProcessor.BehaviorOnVersionConflict.DEFAULT.toString(),
-                        BulkProcessor.BehaviorOnVersionConflict.VALIDATOR, Importance.LOW,
-                        BEHAVIOR_ON_VERSION_CONFLICT_DOC, DATA_CONVERSION_GROUP_NAME, ++order, Width.SHORT,
+                .define(BEHAVIOR_ON_VERSION_CONFLICT_CONFIG, Type.STRING, BehaviorOnVersionConflict.DEFAULT.toString(),
+                        BehaviorOnVersionConflict.VALIDATOR, Importance.LOW, BEHAVIOR_ON_VERSION_CONFLICT_DOC,
+                        DATA_CONVERSION_GROUP_NAME, ++order, Width.SHORT,
                         "Behavior on document's version conflict (optimistic locking)");
     }
 
@@ -311,14 +365,14 @@ public class OpensearchSinkConnectorConfig extends AbstractConfig {
 
     public static final ConfigDef CONFIG = baseConfigDef();
 
-    public OpensearchSinkConnectorConfig(final Map<String, String> props) {
+    public OpenSearchSinkConnectorConfig(final Map<String, String> props) {
         super(CONFIG, props);
         validate();
     }
 
     public boolean requiresErrantRecordReporter() {
-        return behaviorOnMalformedDoc() == BulkProcessor.BehaviorOnMalformedDoc.REPORT
-                || behaviorOnVersionConflict() == BulkProcessor.BehaviorOnVersionConflict.REPORT;
+        return behaviorOnMalformedDoc() == BehaviorOnMalformedDoc.REPORT
+                || behaviorOnVersionConflict() == BehaviorOnVersionConflict.REPORT;
     }
 
     private void validate() {
@@ -337,14 +391,18 @@ public class OpensearchSinkConnectorConfig extends AbstractConfig {
     }
 
     public HttpHost[] httpHosts() {
-        final var connectionUrls = connectionUrls();
-        final var httpHosts = new HttpHost[connectionUrls.size()];
-        int idx = 0;
-        for (final var url : connectionUrls) {
-            httpHosts[idx] = HttpHost.create(url);
-            idx++;
+        try {
+            final var connectionUrls = connectionUrls();
+            final var httpHosts = new HttpHost[connectionUrls.size()];
+            int idx = 0;
+            for (final var url : connectionUrls) {
+                httpHosts[idx] = HttpHost.create(url);
+                idx++;
+            }
+            return httpHosts;
+        } catch (URISyntaxException e) {
+            throw new ConfigException(CONNECTION_URL_CONFIG, String.format("Wrong URI format. %s", e.getMessage()));
         }
-        return httpHosts;
     }
 
     private List<String> connectionUrls() {
@@ -362,18 +420,18 @@ public class OpensearchSinkConnectorConfig extends AbstractConfig {
     }
 
     public boolean ignoreKey() {
-        return getBoolean(OpensearchSinkConnectorConfig.KEY_IGNORE_CONFIG);
+        return getBoolean(OpenSearchSinkConnectorConfig.KEY_IGNORE_CONFIG);
     }
 
     public boolean ignoreSchema() {
-        return getBoolean(OpensearchSinkConnectorConfig.SCHEMA_IGNORE_CONFIG);
+        return getBoolean(OpenSearchSinkConnectorConfig.SCHEMA_IGNORE_CONFIG);
     }
 
     public boolean useCompactMapEntries() {
-        return getBoolean(OpensearchSinkConnectorConfig.COMPACT_MAP_ENTRIES_CONFIG);
+        return getBoolean(OpenSearchSinkConnectorConfig.COMPACT_MAP_ENTRIES_CONFIG);
     }
 
-    protected IndexWriteMethod indexWriteMethod() {
+    public IndexWriteMethod indexWriteMethod() {
         return IndexWriteMethod.valueOf(getString(INDEX_WRITE_METHOD).toUpperCase(Locale.ROOT));
     }
 
@@ -382,55 +440,55 @@ public class OpensearchSinkConnectorConfig extends AbstractConfig {
     }
 
     public Optional<String> dataStreamExistingIndexTemplateName() {
-        return Optional.ofNullable(getString(OpensearchSinkConnectorConfig.DATA_STREAM_INDEX_TEMPLATE_NAME));
+        return Optional.ofNullable(getString(OpenSearchSinkConnectorConfig.DATA_STREAM_INDEX_TEMPLATE_NAME));
     }
 
     public Optional<String> dataStreamPrefix() {
-        return Optional.ofNullable(getString(OpensearchSinkConnectorConfig.DATA_STREAM_PREFIX));
+        return Optional.ofNullable(getString(OpenSearchSinkConnectorConfig.DATA_STREAM_PREFIX));
     }
 
     public String dataStreamTimestampField() {
-        return getString(OpensearchSinkConnectorConfig.DATA_STREAM_TIMESTAMP_FIELD);
+        return getString(OpenSearchSinkConnectorConfig.DATA_STREAM_TIMESTAMP_FIELD);
     }
 
     public Set<String> topicIgnoreKey() {
-        return Set.copyOf(getList(OpensearchSinkConnectorConfig.TOPIC_KEY_IGNORE_CONFIG));
+        return Set.copyOf(getList(OpenSearchSinkConnectorConfig.TOPIC_KEY_IGNORE_CONFIG));
     }
 
     public Set<String> topicIgnoreSchema() {
-        return Set.copyOf(getList(OpensearchSinkConnectorConfig.TOPIC_SCHEMA_IGNORE_CONFIG));
+        return Set.copyOf(getList(OpenSearchSinkConnectorConfig.TOPIC_SCHEMA_IGNORE_CONFIG));
     }
 
     public long flushTimeoutMs() {
-        return getLong(OpensearchSinkConnectorConfig.FLUSH_TIMEOUT_MS_CONFIG);
+        return getLong(OpenSearchSinkConnectorConfig.FLUSH_TIMEOUT_MS_CONFIG);
     }
 
     public int maxBufferedRecords() {
-        return getInt(OpensearchSinkConnectorConfig.MAX_BUFFERED_RECORDS_CONFIG);
+        return getInt(OpenSearchSinkConnectorConfig.MAX_BUFFERED_RECORDS_CONFIG);
     }
 
     public int batchSize() {
-        return getInt(OpensearchSinkConnectorConfig.BATCH_SIZE_CONFIG);
+        return getInt(OpenSearchSinkConnectorConfig.BATCH_SIZE_CONFIG);
     }
 
     public long lingerMs() {
-        return getLong(OpensearchSinkConnectorConfig.LINGER_MS_CONFIG);
+        return getLong(OpenSearchSinkConnectorConfig.LINGER_MS_CONFIG);
     }
 
     public int maxInFlightRequests() {
-        return getInt(OpensearchSinkConnectorConfig.MAX_IN_FLIGHT_REQUESTS_CONFIG);
+        return getInt(OpenSearchSinkConnectorConfig.MAX_IN_FLIGHT_REQUESTS_CONFIG);
     }
 
     public long retryBackoffMs() {
-        return getLong(OpensearchSinkConnectorConfig.RETRY_BACKOFF_MS_CONFIG);
+        return getLong(OpenSearchSinkConnectorConfig.RETRY_BACKOFF_MS_CONFIG);
     }
 
     public int maxRetry() {
-        return getInt(OpensearchSinkConnectorConfig.MAX_RETRIES_CONFIG);
+        return getInt(OpenSearchSinkConnectorConfig.MAX_RETRIES_CONFIG);
     }
 
     public boolean dropInvalidMessage() {
-        return getBoolean(OpensearchSinkConnectorConfig.DROP_INVALID_MESSAGE_CONFIG);
+        return getBoolean(OpenSearchSinkConnectorConfig.DROP_INVALID_MESSAGE_CONFIG);
     }
 
     private DocumentIDStrategy documentIdStrategy() {
@@ -444,7 +502,7 @@ public class OpensearchSinkConnectorConfig extends AbstractConfig {
     public Function<String, String> topicToIndexNameConverter() {
         return dataStreamEnabled()
                 ? this::convertTopicToDataStreamName
-                : OpensearchSinkConnectorConfig::convertTopicToIndexName;
+                : OpenSearchSinkConnectorConfig::convertTopicToIndexName;
     }
 
     private static String convertTopicToIndexName(final String topic) {
@@ -477,19 +535,84 @@ public class OpensearchSinkConnectorConfig extends AbstractConfig {
         return ignoreSchema() || topicIgnoreSchema().contains(topic);
     }
 
-    public RecordConverter.BehaviorOnNullValues behaviorOnNullValues() {
-        return RecordConverter.BehaviorOnNullValues
-                .forValue(getString(OpensearchSinkConnectorConfig.BEHAVIOR_ON_NULL_VALUES_CONFIG));
+    public BehaviorOnNullValues behaviorOnNullValues() {
+        return BehaviorOnNullValues.forValue(getString(OpenSearchSinkConnectorConfig.BEHAVIOR_ON_NULL_VALUES_CONFIG));
     }
 
-    public BulkProcessor.BehaviorOnMalformedDoc behaviorOnMalformedDoc() {
-        return BulkProcessor.BehaviorOnMalformedDoc
-                .forValue(getString(OpensearchSinkConnectorConfig.BEHAVIOR_ON_MALFORMED_DOCS_CONFIG));
+    public BehaviorOnMalformedDoc behaviorOnMalformedDoc() {
+        return BehaviorOnMalformedDoc
+                .forValue(getString(OpenSearchSinkConnectorConfig.BEHAVIOR_ON_MALFORMED_DOCS_CONFIG));
     }
 
-    public BulkProcessor.BehaviorOnVersionConflict behaviorOnVersionConflict() {
-        return BulkProcessor.BehaviorOnVersionConflict
-                .forValue(getString(OpensearchSinkConnectorConfig.BEHAVIOR_ON_VERSION_CONFLICT_CONFIG));
+    public BehaviorOnVersionConflict behaviorOnVersionConflict() {
+        return BehaviorOnVersionConflict
+                .forValue(getString(OpenSearchSinkConnectorConfig.BEHAVIOR_ON_VERSION_CONFLICT_CONFIG));
+    }
+
+    public Optional<Path> trustStorePath() {
+        return Optional.ofNullable(getString(SSL_CONFIG_PREFIX + SSL_TRUSTSTORE_LOCATION_CONFIG)).map(Path::of);
+    }
+
+    public String trustStoreType() {
+        return getString(SSL_CONFIG_PREFIX + SSL_TRUSTSTORE_TYPE_CONFIG);
+    }
+
+    public char[] trustStorePassword() {
+        final var pwd = getPassword(SSL_CONFIG_PREFIX + SSL_TRUSTSTORE_PASSWORD_CONFIG);
+        if (pwd == null) {
+            return null;
+        }
+        return pwd.value().toCharArray();
+    }
+
+    public Optional<Path> keyStorePath() {
+        return Optional.ofNullable(getString(SSL_CONFIG_PREFIX + SSL_KEYSTORE_LOCATION_CONFIG)).map(Path::of);
+    }
+
+    public char[] keyStorePassword() {
+        final var pwd = getPassword(SSL_CONFIG_PREFIX + SSL_KEYSTORE_PASSWORD_CONFIG);
+        if (pwd == null) {
+            return null;
+        }
+        return pwd.value().toCharArray();
+    }
+
+    public String keyStoreType() {
+        return getString(SSL_CONFIG_PREFIX + SSL_KEYSTORE_TYPE_CONFIG);
+    }
+
+    public char[] keyPassword() {
+        final var pwd = getPassword(SSL_CONFIG_PREFIX + SSL_KEY_PASSWORD_CONFIG);
+        if (pwd == null) {
+            return null;
+        }
+        return pwd.value().toCharArray();
+    }
+
+    public String sslProtocol() {
+        return getString(SSL_CONFIG_PREFIX + SSL_PROTOCOL_CONFIG);
+    }
+
+    public String[] sslEnableProtocols() {
+        return getList(SSL_CONFIG_PREFIX + SSL_ENABLED_PROTOCOLS_CONFIG).toArray(new String[0]);
+    }
+
+    public String[] cipherSuitesConfig() {
+        final var suites = getList(SSL_CONFIG_PREFIX + SSL_CIPHER_SUITES_CONFIG);
+        if (suites != null && !suites.isEmpty()) {
+            return suites.toArray(new String[0]);
+        }
+        return null;
+    }
+
+    public boolean disableHostnameVerification() {
+        String sslEndpointIdentificationAlgorithm = getString(
+                SSL_CONFIG_PREFIX + SSL_ENDPOINT_IDENTIFICATION_ALGORITHM_CONFIG);
+        return sslEndpointIdentificationAlgorithm != null && sslEndpointIdentificationAlgorithm.isEmpty();
+    }
+
+    public boolean trustAllCertificates() {
+        return getBoolean(SSL_CONFIG_PREFIX + SSL_CONFIG_TRUST_ALL_CERTIFICATES);
     }
 
     public static void main(final String[] args) {

@@ -19,21 +19,25 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.List;
 import java.util.Map;
+
+import org.opensearch.client.opensearch._types.mapping.DynamicMapping;
+import org.opensearch.client.opensearch.core.SearchRequest;
 
 import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-public class OpensearchSinkConnectorIT extends AbstractKafkaConnectIT {
+public class OpenSearchSinkConnectorIT extends AbstractKafkaConnectIT {
 
-    static final Logger LOGGER = LoggerFactory.getLogger(OpensearchSinkConnectorIT.class);
+    static final Logger LOGGER = LoggerFactory.getLogger(OpenSearchSinkConnectorIT.class);
 
     static final String CONNECTOR_NAME = "os-sink-connector";
 
     static final String TOPIC_NAME = "os-topic";
 
-    public OpensearchSinkConnectorIT() {
+    public OpenSearchSinkConnectorIT() {
         super(TOPIC_NAME, CONNECTOR_NAME);
     }
 
@@ -46,18 +50,25 @@ public class OpensearchSinkConnectorIT extends AbstractKafkaConnectIT {
 
         waitForRecords(TOPIC_NAME, 10);
 
-        for (final var hit : search(TOPIC_NAME)) {
-            final var id = (Integer) hit.getSourceAsMap().get("doc_num");
+        final var searchResults = opensearchClient.search(SearchRequest.of(b -> b.index(TOPIC_NAME)), Map.class).hits();
+        for (final var hit : searchResults.hits()) {
+            final var id = (Integer) hit.source().get("doc_num");
             assertNotNull(id);
             assertTrue(id < 10);
-            assertEquals(TOPIC_NAME, hit.getIndex());
+            assertEquals(TOPIC_NAME, hit.index());
         }
+        assertEquals(DynamicMapping.True,
+                opensearchClient.indices()
+                        .getMapping(b -> b.index(List.of(TOPIC_NAME)))
+                        .get(TOPIC_NAME)
+                        .mappings()
+                        .dynamic());
     }
 
     @Test
     public void testConnectorConfig() throws Exception {
-        assertEquals(connect.validateConnectorConfig("io.aiven.kafka.connect.opensearch.OpensearchSinkConnector",
-                Map.of("connector.class", "io.aiven.kafka.connect.opensearch.OpensearchSinkConnector", "topics",
+        assertEquals(connect.validateConnectorConfig("io.aiven.kafka.connect.opensearch.OpenSearchSinkConnector",
+                Map.of("connector.class", "io.aiven.kafka.connect.opensearch.OpenSearchSinkConnector", "topics",
                         "example-topic-name", "name", "test-connector-name"))
                 .errorCount(), 1);
     }

@@ -17,10 +17,9 @@ package io.aiven.kafka.connect.opensearch.spi;
 
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Iterator;
 import java.util.ServiceLoader;
 
-import io.aiven.kafka.connect.opensearch.OpensearchSinkConnectorConfig;
+import io.aiven.kafka.connect.opensearch.OpenSearchSinkConnectorConfig;
 
 public final class ClientsConfiguratorProvider {
     private ClientsConfiguratorProvider() {
@@ -32,17 +31,15 @@ public final class ClientsConfiguratorProvider {
      *
      * @param config
      *            provided configuration
-     * @return the list of discovered {@link OpensearchClientConfigurator} configurators which are applicable to the
+     * @return the list of discovered {@link OpenSearchClientConfigurator} configurators which are applicable to the
      *         provided configuration.
      */
-    public static Collection<OpensearchClientConfigurator> forOpensearch(final OpensearchSinkConnectorConfig config) {
-        final Collection<OpensearchClientConfigurator> configurators = new ArrayList<>();
-        final ServiceLoader<OpensearchClientConfigurator> loaders = ServiceLoader
-                .load(OpensearchClientConfigurator.class, ClientsConfiguratorProvider.class.getClassLoader());
+    public static Collection<OpenSearchClientConfigurator> forOpensearch(final OpenSearchSinkConnectorConfig config) {
+        final Collection<OpenSearchClientConfigurator> configurators = new ArrayList<>();
+        final var loaders = ServiceLoader.load(OpenSearchClientConfigurator.class,
+                ClientsConfiguratorProvider.class.getClassLoader());
 
-        final Iterator<OpensearchClientConfigurator> iterator = loaders.iterator();
-        while (iterator.hasNext()) {
-            final OpensearchClientConfigurator configurator = iterator.next();
+        for (OpenSearchClientConfigurator configurator : loaders) {
             configurators.add(configurator);
         }
 

@@ -15,65 +15,80 @@
  */
 package io.aiven.kafka.connect.opensearch;
 
-import static io.aiven.kafka.connect.opensearch.OpensearchBasicAuthConfigurator.CONNECTION_PASSWORD_CONFIG;
-import static io.aiven.kafka.connect.opensearch.OpensearchBasicAuthConfigurator.CONNECTION_USERNAME_CONFIG;
-import static io.aiven.kafka.connect.opensearch.OpensearchSinkConnectorConfig.CONNECTION_URL_CONFIG;
+import static io.aiven.kafka.connect.opensearch.OpenSearchSinkConnectorConfig.CONNECTION_URL_CONFIG;
+import static io.aiven.kafka.connect.opensearch.OpenSearchSinkConnectorConfig.READ_TIMEOUT_MS_CONFIG;
+import static io.aiven.kafka.connect.opensearch.basicauth.OpenSearchBasicAuthConfigDefContributor.CONNECTION_PASSWORD_CONFIG;
+import static io.aiven.kafka.connect.opensearch.basicauth.OpenSearchBasicAuthConfigDefContributor.CONNECTION_USERNAME_CONFIG;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.util.HashMap;
 import java.util.Map;
-import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 import org.apache.kafka.test.TestUtils;
 
-import org.opensearch.action.search.SearchRequest;
-import org.opensearch.client.RequestOptions;
-import org.opensearch.client.core.CountRequest;
-import org.opensearch.search.SearchHits;
-import org.opensearch.testcontainers.OpensearchContainer;
+import org.opensearch.client.opensearch.OpenSearchClient;
+import org.opensearch.client.opensearch._types.HealthStatus;
+import org.opensearch.client.transport.httpclient5.ApacheHttpClient5TransportBuilder;
+import org.opensearch.testcontainers.OpenSearchContainer;
 
-import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
-import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 @Testcontainers
 public abstract class AbstractIT {
 
-    @Container
-    static OpensearchContainer opensearchContainer = new OpensearchContainer(getOpenSearchImage());
+    static OpenSearchContainer<?> openSearchContainer;
 
-    OpensearchClient opensearchClient;
+    OpenSearchClient opensearchClient;
 
-    @BeforeEach
-    void setup() throws Exception {
-        final var config = new OpensearchSinkConnectorConfig(getDefaultProperties());
-        opensearchClient = new OpensearchClient(config);
+    @BeforeAll
+    static void beforeAll() {
+        openSearchContainer = new OpenSearchContainer<>(getOpenSearchImage());
+        openSearchContainer.start();
     }
 
-    protected static Map<String, String> getDefaultProperties() {
-        return Map.of(CONNECTION_URL_CONFIG, opensearchContainer.getHttpHostAddress(), CONNECTION_USERNAME_CONFIG,
-                "admin", CONNECTION_PASSWORD_CONFIG, "admin");
-    }
-
-    @AfterEach
-    void tearDown() throws Exception {
-        if (Objects.nonNull(opensearchClient)) {
-            opensearchClient.close();
+    @AfterAll
+    static void afterAll() {
+        if (openSearchContainer != null) {
+            openSearchContainer.stop();
         }
     }
 
-    protected SearchHits search(final String indexName) throws IOException {
-        return opensearchClient.client.search(new SearchRequest(indexName), RequestOptions.DEFAULT).getHits();
+    @BeforeEach
+    void setup() throws Exception {
+        final var props = new HashMap<>(getDefaultProperties());
+        if (openSearchContainer.isSecurityEnabled())
+            props.put("connection.trust.all.certificates", "true");
+        final var config = new OpenSearchSinkConnectorConfig(props);
+        opensearchClient = new OpenSearchClient(ApacheHttpClient5TransportBuilder.builder(config.httpHosts())
+                .setHttpClientConfigCallback(new HttpClientConfigCallback(config))
+                .build());
+        TestUtils.waitForCondition(() -> {
+            try {
+                return Set.of(HealthStatus.Green, HealthStatus.Yellow)
+                        .contains(opensearchClient.cluster().health().status());
+            } catch (final Exception e) {
+                return false;
+            }
+        }, TimeUnit.MINUTES.toMillis(1L), "Cluster hasn't finished formation");
+    }
+
+    static Map<String, String> getDefaultProperties() {
+        return Map.of(CONNECTION_URL_CONFIG, openSearchContainer.getHttpHostAddress(), CONNECTION_USERNAME_CONFIG,
+                "admin", CONNECTION_PASSWORD_CONFIG, openSearchContainer.getPassword(), READ_TIMEOUT_MS_CONFIG,
+                "10000");
     }
 
     protected void waitForRecords(final String indexName, final int expectedRecords) throws InterruptedException {
         TestUtils.waitForCondition(() -> {
             try {
-                return expectedRecords == opensearchClient.client
-                        .count(new CountRequest(indexName), RequestOptions.DEFAULT)
-                        .getCount();
+                opensearchClient.indices().refresh(r -> r.index(indexName));
+                return expectedRecords == opensearchClient.count(c -> c.index(indexName)).count();
             } catch (final IOException e) {
                 throw new UncheckedIOException(e);
             }
@@ -81,11 +96,11 @@ public abstract class AbstractIT {
                 String.format("Could not find expected documents (%d) in time.", expectedRecords));
     }
 
-    private static String getOpenSearchImage() {
+    protected static String getOpenSearchImage() {
         return "opensearchproject/opensearch:" + getOpenSearchVersion();
     }
 
     protected static String getOpenSearchVersion() {
-        return System.getProperty("opensearch.testcontainers.image-version", "2.0.0");
+        return System.getProperty("opensearch.testcontainers.image-version", "2.19.4");
     }
 }

@@ -32,7 +32,7 @@ plugins {
     id 'idea'
 
     // https://plugins.gradle.org/plugin/com.diffplug.spotless
-    id "com.diffplug.spotless" version "6.25.0"
+    id "com.diffplug.spotless" version "8.2.1"
 }
 
 wrapper {
@@ -57,7 +57,7 @@ spotless {
 
         // define the steps to apply to those files
         trimTrailingWhitespace()
-        indentWithSpaces()
+        leadingTabsToSpaces()
         endWithNewline()
     }
 
@@ -67,15 +67,30 @@ spotless {
         removeUnusedImports()
         replaceRegex("No wildcard imports.", "import(?:\\s+static)?\\s+[^\\*\\s]+\\*;(\r\n|\r|\n)", '$1')
         eclipse().configFile("${rootDir}/gradle-config/aiven-eclipse-formatter.xml")
-        indentWithSpaces()
+        leadingTabsToSpaces()
         endWithNewline()
         trimTrailingWhitespace()
+
+        // Custom rule to check class names don't contain "Opensearch"
+        custom("checkClassNames", { input ->
+            def pattern = ~/(?:public\s+)?(?:abstract\s+)?(?:final\s+)?(?:class|interface|enum)\s+([A-Za-z0-9_]*Opensearch[A-Za-z0-9_]*)/
+            def matcher = pattern.matcher(input)
+            if (matcher.find()) {
+                def className = matcher.group(1)
+                throw new GradleException(
+                        "Class name '${className}' contains 'Opensearch' instead of 'OpenSearch'. " +
+                                "Please rename to use 'OpenSearch' (capital S)."
+                )
+            }
+            return input
+        } as Closure<String>)
     }
+
 }
 
 java {
-    sourceCompatibility = JavaVersion.VERSION_11
-    targetCompatibility = JavaVersion.VERSION_11
+    sourceCompatibility = JavaVersion.VERSION_21
+    targetCompatibility = JavaVersion.VERSION_21
 }
 
 compileJava {
@@ -83,7 +98,7 @@ compileJava {
 }
 
 jacoco {
-    toolVersion = "0.8.9"
+    toolVersion = "0.8.14"
 }
 
 distributions {
@@ -131,12 +146,18 @@ publishing {
 }
 
 ext {
-    kafkaVersion = "3.5.0"
-    apacheCommonsLangVersion = "3.17.0"
-    slf4jVersion = "1.7.36"
-    openSearchVersion = "2.16.0"
+    kafkaVersion = "3.8.1"
+    apacheCommonsLangVersion = "3.20.0"
+    slf4jVersion = "2.0.17"
 
-    testcontainersVersion = "1.20.2"
+    openSearchJavaClientVersion = "3.6.0"
+
+    mockitoVersion = "5.22.0"
+
+    junitVersion = "6.0.3"
+
+    testcontainersVersion = "2.0.3"
+    openSearchTestcontainersVersion = "4.1.0"
 }
 
 sourceSets {
@@ -150,8 +171,8 @@ sourceSets {
 
 idea {
     module {
-        testSourceDirs += project.sourceSets.integrationTest.java.srcDirs
-        testSourceDirs += project.sourceSets.integrationTest.resources.srcDirs
+        testSources = files(project.sourceSets.integrationTest.java.srcDirs)
+        testSources = files(project.sourceSets.integrationTest.resources.srcDirs)
     }
 }
 
@@ -171,25 +192,24 @@ dependencies {
     compileOnly "org.apache.kafka:connect-json:$kafkaVersion"
 
     implementation "org.slf4j:slf4j-api:$slf4jVersion"
-    implementation "com.google.code.gson:gson:2.11.0"
-    implementation "org.opensearch.client:opensearch-rest-high-level-client:$openSearchVersion"
+    implementation "org.opensearch.client:opensearch-java:$openSearchJavaClientVersion"
     implementation "org.apache.commons:commons-lang3:$apacheCommonsLangVersion"
 
-    testImplementation "org.junit.jupiter:junit-jupiter:5.11.0"
-    testImplementation "org.mockito:mockito-core:5.12.0"
-    testImplementation "org.mockito:mockito-inline:5.2.0"
-    testImplementation "org.mockito:mockito-junit-jupiter:5.14.1"
+    testImplementation platform("org.junit:junit-bom:${junitVersion}")
+    testImplementation "org.junit.jupiter:junit-jupiter:${junitVersion}"
+
+    testImplementation "org.mockito:mockito-core:${mockitoVersion}"
+    testImplementation "org.mockito:mockito-junit-jupiter:${mockitoVersion}"
 
     testImplementation "org.apache.kafka:connect-api:$kafkaVersion"
     testImplementation "org.apache.kafka:connect-json:$kafkaVersion"
-    testImplementation "com.fasterxml.jackson.core:jackson-core:2.17.2"
-    testImplementation "com.fasterxml.jackson.core:jackson-databind:2.17.2"
-    testImplementation "com.fasterxml.jackson.core:jackson-annotations:2.17.2"
-    testRuntimeOnly "org.slf4j:slf4j-log4j12:$slf4jVersion"
 
-    integrationTestImplementation "org.testcontainers:junit-jupiter:$testcontainersVersion"
-    integrationTestImplementation "org.testcontainers:kafka:$testcontainersVersion" // this is not Kafka version
-    integrationTestImplementation "org.opensearch:opensearch-testcontainers:2.0.1"
+    testRuntimeOnly "org.slf4j:slf4j-log4j12:$slf4jVersion"
+    testRuntimeOnly "org.junit.platform:junit-platform-launcher:${junitVersion}"
+
+    integrationTestImplementation "org.testcontainers:testcontainers-junit-jupiter:$testcontainersVersion"
+    integrationTestImplementation "org.testcontainers:testcontainers-kafka:$testcontainersVersion" // this is not Kafka version
+    integrationTestImplementation "org.opensearch:opensearch-testcontainers:$openSearchTestcontainersVersion"
     integrationTestImplementation "org.apache.kafka:kafka-clients:$kafkaVersion:test"
     integrationTestImplementation "org.apache.kafka:connect-runtime:${kafkaVersion}"
     integrationTestImplementation "org.apache.kafka:connect-runtime:${kafkaVersion}:test"
@@ -203,7 +223,7 @@ test {
     }
 }
 
-task integrationTest(type: Test) {
+tasks.register('integrationTest', Test) {
     description = 'Runs the integration tests.'
     group = 'verification'
     testClassesDirs = sourceSets.integrationTest.output.classesDirs
@@ -219,21 +239,16 @@ task integrationTest(type: Test) {
     // Pass the distribution file path to the tests.
     systemProperty("integration-test.distribution.file.path", distTar.archiveFile.get().asFile.path)
     systemProperty("opensearch.testcontainers.image-version",
-        project.findProperty("opensearch.testcontainers.image-version") ? project.getProperty("opensearch.testcontainers.image-version") : "2.0.0")
+            project.findProperty("opensearch.testcontainers.image-version") ? project.getProperty("opensearch.testcontainers.image-version") : "2.19.4")
 }
 
-task connectorConfigDoc {
+tasks.register('connectorConfigDoc', JavaExec) {
     description = "Generates the connector's configuration documentation."
     group = "documentation"
     dependsOn "classes"
-
-    doLast {
-        javaexec {
-            main = "io.aiven.kafka.connect.opensearch.OpensearchSinkConnectorConfig"
-            classpath = sourceSets.main.runtimeClasspath + sourceSets.main.compileClasspath
-            standardOutput = new FileOutputStream("$projectDir/docs/opensearch-sink-connector-config-options.rst")
-        }
-    }
+    mainClass = "io.aiven.kafka.connect.opensearch.OpenSearchSinkConnectorConfig"
+    classpath = sourceSets.main.runtimeClasspath + sourceSets.main.compileClasspath
+    standardOutput = new FileOutputStream("$projectDir/docs/opensearch-sink-connector-config-options.rst")
 }
 
 tasks.named(JavaBasePlugin.CHECK_TASK_NAME) {

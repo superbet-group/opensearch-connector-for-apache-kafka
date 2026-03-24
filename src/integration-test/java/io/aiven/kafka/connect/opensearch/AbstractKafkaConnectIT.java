@@ -15,9 +15,9 @@
  */
 package io.aiven.kafka.connect.opensearch;
 
-import static io.aiven.kafka.connect.opensearch.OpensearchSinkConnectorConfig.KEY_IGNORE_CONFIG;
-import static io.aiven.kafka.connect.opensearch.OpensearchSinkConnectorConfig.MAX_BUFFERED_RECORDS_CONFIG;
-import static io.aiven.kafka.connect.opensearch.OpensearchSinkConnectorConfig.SCHEMA_IGNORE_CONFIG;
+import static io.aiven.kafka.connect.opensearch.OpenSearchSinkConnectorConfig.KEY_IGNORE_CONFIG;
+import static io.aiven.kafka.connect.opensearch.OpenSearchSinkConnectorConfig.MAX_BUFFERED_RECORDS_CONFIG;
+import static io.aiven.kafka.connect.opensearch.OpenSearchSinkConnectorConfig.SCHEMA_IGNORE_CONFIG;
 import static org.apache.kafka.connect.json.JsonConverterConfig.SCHEMAS_ENABLE_CONFIG;
 import static org.apache.kafka.connect.runtime.ConnectorConfig.CONNECTOR_CLASS_CONFIG;
 import static org.apache.kafka.connect.runtime.ConnectorConfig.KEY_CONVERTER_CLASS_CONFIG;
@@ -62,7 +62,7 @@ public class AbstractKafkaConnectIT extends AbstractIT {
 
     @BeforeEach
     void startConnect() {
-        connect = new EmbeddedConnectCluster.Builder().name("elasticsearch-it-connect-cluster").build();
+        connect = new EmbeddedConnectCluster.Builder().name("opensearch-it-connect-cluster").build();
         connect.start();
         connect.kafka().createTopic(topicName);
     }
@@ -97,9 +97,9 @@ public class AbstractKafkaConnectIT extends AbstractIT {
         }
     }
 
-    static Map<String, String> connectorProperties(String topicName) {
+    Map<String, String> connectorProperties(String topicName) {
         final var props = new HashMap<>(getDefaultProperties());
-        props.put(CONNECTOR_CLASS_CONFIG, OpensearchSinkConnector.class.getName());
+        props.put(CONNECTOR_CLASS_CONFIG, OpenSearchSinkConnector.class.getName());
         props.put(TOPICS_CONFIG, topicName);
         props.put(TASKS_MAX_CONFIG, Integer.toString(1));
         props.put(KEY_CONVERTER_CLASS_CONFIG, StringConverter.class.getName());
@@ -108,6 +108,7 @@ public class AbstractKafkaConnectIT extends AbstractIT {
         props.put(KEY_IGNORE_CONFIG, "true");
         props.put(SCHEMA_IGNORE_CONFIG, "true");
         props.put(MAX_BUFFERED_RECORDS_CONFIG, "1");
+        props.put("offset.flush.timeout.ms", "1000");
         return props;
     }
 
