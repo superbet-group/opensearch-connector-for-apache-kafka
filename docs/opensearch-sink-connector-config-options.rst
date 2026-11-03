@@ -43,10 +43,11 @@ Connector
   * Importance: low
 
 ``flush.timeout.ms``
-  The timeout in milliseconds to use for periodic flushing, and when waiting for buffer space to be made available by completed requests as records are added. If this timeout is exceeded the task will fail.
+  Positive timeout in milliseconds for bulk admission, flush and close waits, and errant record reporting. Flush waits for HTTP requests, retries and listener processing before offsets can be committed. If a wait exceeds this timeout the task fails; long retry backoffs can exhaust the flush deadline.
 
   * Type: long
   * Default: 10000 (10 seconds)
+  * Valid Values: [1,...]
   * Importance: low
 
 ``max.retries``

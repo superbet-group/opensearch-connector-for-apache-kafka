@@ -29,7 +29,6 @@ import org.apache.kafka.connect.sink.ErrantRecordReporter;
 import org.apache.kafka.connect.sink.SinkRecord;
 
 import org.opensearch.client.opensearch.OpenSearchClient;
-import org.opensearch.client.opensearch._helpers.bulk.BulkIngester;
 import org.opensearch.client.opensearch._types.OpenSearchException;
 import org.opensearch.client.opensearch._types.WaitForActiveShards;
 import org.opensearch.client.opensearch._types.mapping.DynamicMapping;
@@ -41,6 +40,7 @@ import org.opensearch.client.transport.BackoffPolicy;
 import org.opensearch.client.transport.OpenSearchTransport;
 import org.opensearch.client.transport.httpclient5.ApacheHttpClient5TransportBuilder;
 
+import io.aiven.kafka.connect.opensearch.bulk.BulkIngester;
 import io.aiven.kafka.connect.opensearch.request.BulkOperationBuilder;
 import io.aiven.kafka.connect.opensearch.request.ConnectorBulkListener;
 
@@ -76,11 +76,13 @@ public class OpenSearchTaskHandler {
                 .backoffPolicy(BackoffPolicy.exponentialBackoff(config.retryBackoffMs(), config.maxRetry()))
                 .maxOperations(this.config.maxBufferedRecords())
                 .maxSize(this.config.maxBatchPayloadBytes())
+                .waitTimeout(this.config.flushTimeoutMs())
                 .listener(new ConnectorBulkListener(config, errantRecordReporter)));
         this.bulkOperationBuilder = new BulkOperationBuilder(config);
     }
 
     public void put(final Collection<SinkRecord> records) {
+        bulkIngester.throwIfFailed();
         LOGGER.trace("Putting {} to OpenSearch", records);
         for (final var record : records) {
             try {
@@ -207,19 +209,13 @@ public class OpenSearchTaskHandler {
     }
 
     public void flush() {
-        bulkIngester.flush();
+        bulkIngester.flushAndAwait();
     }
 
     public void close() throws IOException {
-        if (bulkIngester != null) {
-            try {
-                bulkIngester.close();
-            } catch (Exception e) {
-                LOGGER.warn("Couldn't close bulk ingester", e);
-            }
-        }
-        if (transport != null) {
-            transport.close();
+        // Always close the transport, preserving the ingester failure if both fail.
+        try (transport) {
+            bulkIngester.close();
         }
     }
 

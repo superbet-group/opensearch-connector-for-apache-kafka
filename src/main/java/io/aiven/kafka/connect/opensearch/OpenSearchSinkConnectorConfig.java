@@ -86,9 +86,9 @@ public class OpenSearchSinkConnectorConfig extends AbstractConfig {
             + " not full, rather than immediately sending it out the task will wait up to the given "
             + "delay to allow other records to be added so that they can be batched into a single " + "request.";
     public static final String FLUSH_TIMEOUT_MS_CONFIG = "flush.timeout.ms";
-    private static final String FLUSH_TIMEOUT_MS_DOC = "The timeout in milliseconds to use for periodic flushing, and when waiting for buffer "
-            + "space to be made available by completed requests as records are added. If this timeout "
-            + "is exceeded the task will fail.";
+    private static final String FLUSH_TIMEOUT_MS_DOC = "Positive timeout in milliseconds for bulk admission, flush and close waits, and errant record reporting. "
+            + "Flush waits for HTTP requests, retries and listener processing before offsets can be committed. "
+            + "If a wait exceeds this timeout the task fails; long retry backoffs can exhaust the flush deadline.";
     public static final String MAX_RETRIES_CONFIG = "max.retries";
     private static final String MAX_RETRIES_DOC = "The maximum number of retries that are allowed for failed indexing requests. If the retry "
             + "attempts are exhausted the task will fail.";
@@ -154,8 +154,7 @@ public class OpenSearchSinkConnectorConfig extends AbstractConfig {
 
     public static final String BEHAVIOR_ON_LARGE_MESSAGE_CONFIG = "behavior.on.large.message";
     private static final String BEHAVIOR_ON_LARGE_MESSAGE_DOC = "How to handle records whose serialized JSON payload "
-            + "size exceeds ``" + MAX_BATCH_PAYLOAD_BYTES_CONFIG + "``. "
-            + "Valid options are:\n"
+            + "size exceeds ``" + MAX_BATCH_PAYLOAD_BYTES_CONFIG + "``. " + "Valid options are:\n"
             + "- ``skip`` – discard the record silently (with a DEBUG log)\n"
             + "- ``fail`` – stop the task with a ConnectException\n"
             + "- ``pass`` – forward the record anyway; the bulk request may be rejected with HTTP 413\n"
@@ -284,8 +283,8 @@ public class OpenSearchSinkConnectorConfig extends AbstractConfig {
                         CONNECTOR_GROUP_NAME, ++order, Width.SHORT, "Max Buffered Records")
                 .define(LINGER_MS_CONFIG, Type.LONG, 1L, Importance.LOW, LINGER_MS_DOC, CONNECTOR_GROUP_NAME, ++order,
                         Width.SHORT, "Linger (ms)")
-                .define(FLUSH_TIMEOUT_MS_CONFIG, Type.LONG, 10000L, Importance.LOW, FLUSH_TIMEOUT_MS_DOC,
-                        CONNECTOR_GROUP_NAME, ++order, Width.SHORT, "Flush Timeout (ms)")
+                .define(FLUSH_TIMEOUT_MS_CONFIG, Type.LONG, 10000L, ConfigDef.Range.atLeast(1), Importance.LOW,
+                        FLUSH_TIMEOUT_MS_DOC, CONNECTOR_GROUP_NAME, ++order, Width.SHORT, "Flush Timeout (ms)")
                 .define(MAX_RETRIES_CONFIG, Type.INT, 5, Importance.LOW, MAX_RETRIES_DOC, CONNECTOR_GROUP_NAME, ++order,
                         Width.SHORT, "Max Retries")
                 .define(RETRY_BACKOFF_MS_CONFIG, Type.LONG, 100L, Importance.LOW, RETRY_BACKOFF_MS_DOC,

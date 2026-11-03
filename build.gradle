@@ -61,7 +61,18 @@ spotless {
         endWithNewline()
     }
 
+    // Preserve the upstream copyright and SPDX headers in the vendored ingester.
+    format 'bulk', com.diffplug.gradle.spotless.JavaExtension, {
+        target 'src/main/java/io/aiven/kafka/connect/opensearch/bulk/*.java'
+        importOrder("javax", "java", "org.apache.kafka", "org.opensearch", "io.aiven", "")
+        removeUnusedImports()
+        eclipse().configFile("${rootDir}/gradle-config/aiven-eclipse-formatter.xml")
+        trimTrailingWhitespace()
+        endWithNewline()
+    }
+
     java {
+        targetExclude 'src/main/java/io/aiven/kafka/connect/opensearch/bulk/*.java'
         licenseHeaderFile file("${rootDir}/gradle-config/java.header")
         importOrder("javax", "java", "org.apache.kafka","org.opensearch","io.aiven","")
         removeUnusedImports()

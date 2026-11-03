@@ -17,6 +17,9 @@ package io.aiven.kafka.connect.opensearch.request;
 
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 import org.apache.kafka.connect.errors.ConnectException;
 import org.apache.kafka.connect.sink.ErrantRecordReporter;
@@ -25,6 +28,7 @@ import org.apache.kafka.connect.sink.SinkRecord;
 import org.opensearch.client.opensearch._helpers.bulk.BulkListener;
 import org.opensearch.client.opensearch.core.BulkRequest;
 import org.opensearch.client.opensearch.core.BulkResponse;
+import org.opensearch.client.opensearch.core.bulk.OperationType;
 
 import io.aiven.kafka.connect.opensearch.BehaviorOnMalformedDoc;
 import io.aiven.kafka.connect.opensearch.BehaviorOnVersionConflict;
@@ -46,11 +50,14 @@ public final class ConnectorBulkListener implements BulkListener<SinkRecord> {
 
     private final ErrantRecordReporter errantRecordReporter;
 
+    private final long timeoutMs;
+
     public ConnectorBulkListener(final OpenSearchSinkConnectorConfig config,
             final ErrantRecordReporter errantRecordReporter) {
         this.behaviorOnMalformedDoc = config.behaviorOnMalformedDoc();
         this.behaviorOnVersionConflict = config.behaviorOnVersionConflict();
         this.errantRecordReporter = errantRecordReporter;
+        this.timeoutMs = config.flushTimeoutMs();
     }
 
     @Override
@@ -59,17 +66,21 @@ public final class ConnectorBulkListener implements BulkListener<SinkRecord> {
 
     @Override
     public void afterBulk(long executionId, BulkRequest request, List<SinkRecord> records, BulkResponse response) {
-        if (response.errors()) {
-            for (var i = 0; i < response.items().size(); i++) {
-                final var itm = response.items().get(i);
-                if (itm.error() != null) {
-                    if (MALFORMED_DOC_ERRORS.contains(itm.error().type())) {
-                        handleMalformedDoc(executionId, response.items().size(), itm.error().reason(), records.get(i));
-                    } else if (responseContainsVersionConflict(itm.error().type())) {
-                        handleVersionConflict(executionId, response.items().size(), itm.error().reason(),
-                                records.get(i));
-                    }
+        if (response.items().size() != records.size()) {
+            throw new ConnectException("Bulk response item count mismatch");
+        }
+        for (var i = 0; i < response.items().size(); i++) {
+            final var itm = response.items().get(i);
+            if (itm.error() != null) {
+                if (MALFORMED_DOC_ERRORS.contains(itm.error().type())) {
+                    handleMalformedDoc(executionId, response.items().size(), itm.error().reason(), records.get(i));
+                } else if (responseContainsVersionConflict(itm.error().type())) {
+                    handleVersionConflict(executionId, response.items().size(), itm.error().reason(), records.get(i));
+                } else {
+                    throw new ConnectException("Unhandled bulk item error: " + itm.error().type());
                 }
+            } else if (itm.status() >= 300 && !(itm.status() == 404 && itm.operationType() == OperationType.Delete)) {
+                throw new ConnectException("Unsuccessful bulk item without error details: " + itm.status());
             }
         }
     }
@@ -86,9 +97,6 @@ public final class ConnectorBulkListener implements BulkListener<SinkRecord> {
                         executionId, itemsSize, reason);
                 break;
             case REPORT :
-                final String errorMessage = String.format("Encountered a version conflict when executing batch %s of %s"
-                        + " records. Reporting this error to the errant record reporter" + " and will not index record."
-                        + " Error message: %s", executionId, reason);
                 sendToErrantRecordReporter(sinkRecord, reason);
                 break;
             case WARN :
@@ -104,6 +112,7 @@ public final class ConnectorBulkListener implements BulkListener<SinkRecord> {
                                 + " change the configuration property '{}' from '{}' to '{}').",
                         executionId, itemsSize, reason, OpenSearchSinkConnectorConfig.BEHAVIOR_ON_MALFORMED_DOCS_CONFIG,
                         BehaviorOnMalformedDoc.FAIL, BehaviorOnMalformedDoc.IGNORE);
+                throw new ConnectException("Malformed document rejected: " + reason);
         }
     }
 
@@ -119,9 +128,6 @@ public final class ConnectorBulkListener implements BulkListener<SinkRecord> {
                         executionId, itemsSize, reason);
                 break;
             case REPORT :
-                final String errorMessage = String.format("Encountered a version conflict when executing batch %s of %s"
-                        + " records. Reporting this error to the errant record reporter and will"
-                        + " keep an existing record." + " Error message: %s", executionId, itemsSize, reason);
                 sendToErrantRecordReporter(sinkRecord, reason);
                 break;
             case WARN :
@@ -139,7 +145,7 @@ public final class ConnectorBulkListener implements BulkListener<SinkRecord> {
                         executionId, itemsSize, reason,
                         OpenSearchSinkConnectorConfig.BEHAVIOR_ON_VERSION_CONFLICT_CONFIG, BehaviorOnMalformedDoc.FAIL,
                         BehaviorOnMalformedDoc.IGNORE);
-                break;
+                throw new ConnectException("Version conflict rejected: " + reason);
         }
     }
 
@@ -148,7 +154,14 @@ public final class ConnectorBulkListener implements BulkListener<SinkRecord> {
     }
 
     private void sendToErrantRecordReporter(final SinkRecord record, final String errorMessage) {
-        errantRecordReporter.report(record, new Exception(errorMessage));
+        try {
+            errantRecordReporter.report(record, new Exception(errorMessage)).get(timeoutMs, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new ConnectException("Interrupted waiting for errant record reporting", e);
+        } catch (ExecutionException | TimeoutException e) {
+            throw new ConnectException("Errant record reporting failed or timed out", e);
+        }
     }
 
     @Override
@@ -158,19 +171,17 @@ public final class ConnectorBulkListener implements BulkListener<SinkRecord> {
         // Retrying the same batch will not help — the payload size won't change.
         // Throw ConnectException (non-retriable) so the task fails cleanly instead of looping forever.
         if (is413(failure)) {
-            LOGGER.error(
-                    "Bulk request for batch {} of {} records rejected with 413 Request Entity Too Large."
-                            + " The batch payload exceeded OpenSearch's http.max_content_length limit."
-                            + " Consider lowering max.batch.payload.bytes.",
-                    executionId, records.size());
+            LOGGER.error("Bulk request for batch {} of {} records rejected with 413 Request Entity Too Large."
+                    + " The batch payload exceeded OpenSearch's http.max_content_length limit."
+                    + " Consider lowering max.batch.payload.bytes.", executionId, records.size());
             throw new ConnectException("Bulk request rejected with 413 Request Entity Too Large", failure);
         }
-        LOGGER.error("Bulk {} has failed. Error is", executionId, failure);
+        throw new ConnectException("Bulk request failed", failure);
     }
 
     /**
-     * Returns {@code true} when the failure (or any cause in its chain) is an HTTP 413 response.
-     * Uses message-string inspection to remain resilient against opensearch-java transport changes.
+     * Returns {@code true} when the failure (or any cause in its chain) is an HTTP 413 response. Uses message-string
+     * inspection to remain resilient against opensearch-java transport changes.
      */
     private boolean is413(final Throwable failure) {
         if (failure == null) {
