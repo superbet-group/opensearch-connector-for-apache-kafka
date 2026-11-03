@@ -34,24 +34,21 @@ package io.aiven.kafka.connect.opensearch.bulk;
 
 import javax.annotation.Nullable;
 
-import java.io.IOException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
-import java.util.LongSummaryStatistics;
 import java.util.Optional;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Function;
-import java.util.stream.Collectors;
 
 import org.opensearch.client.opensearch.OpenSearchAsyncClient;
 import org.opensearch.client.opensearch.OpenSearchClient;
@@ -133,11 +130,17 @@ public class BulkIngester<Context> implements AutoCloseable {
     private int requestsInFlightCount;
     private volatile boolean isClosed = false;
 
+    // Failure is terminal. Allocate its wrapper while the ingester is healthy.
+    private final IllegalStateException terminalFailure = new IllegalStateException("Bulk ingester failed");
+    private final TimeoutException timeoutFailure = new TimeoutException("Bulk ingester wait deadline expired");
+    private volatile Throwable failure;
+    private final long waitTimeoutMillis;
+
     // Synchronization objects
     private final ReentrantLock lock = new ReentrantLock();
-    private final FnCondition addCondition = new FnCondition(lock, this::canAddOperation);
-    private final FnCondition sendRequestCondition = new FnCondition(lock, this::canSendRequest);
-    private final FnCondition closeCondition = new FnCondition(lock, this::closedAndFlushed);
+    private final FnCondition addCondition = condition(this::canAddOperation);
+    private final FnCondition sendRequestCondition = condition(this::canSendRequest);
+    private final FnCondition drainedCondition = condition(this::isDrained);
     private final AtomicInteger listenerInProgressCount = new AtomicInteger();
     private final AtomicInteger retriesInProgressCount = new AtomicInteger();
 
@@ -145,13 +148,15 @@ public class BulkIngester<Context> implements AutoCloseable {
         public final long id;
         public final BulkRequest request;
         public final List<Context> contexts;
+        public final List<RetryableBulkOperation<Context>> sentOperations;
         public final CompletionStage<BulkResponse> futureResponse;
 
         RequestExecution(long id, BulkRequest request, List<Context> contexts,
-                CompletionStage<BulkResponse> futureResponse) {
+                List<RetryableBulkOperation<Context>> sentOperations, CompletionStage<BulkResponse> futureResponse) {
             this.id = id;
             this.request = request;
             this.contexts = contexts;
+            this.sentOperations = sentOperations;
             this.futureResponse = futureResponse;
         }
     }
@@ -166,6 +171,10 @@ public class BulkIngester<Context> implements AutoCloseable {
         this.listener = builder.listener;
         this.backoffPolicy = builder.backoffPolicy;
         this.flushIntervalMillis = builder.flushIntervalMillis;
+        if (builder.waitTimeoutMillis <= 0) {
+            throw new IllegalArgumentException("A positive wait timeout is required");
+        }
+        this.waitTimeoutMillis = builder.waitTimeoutMillis;
 
         if (flushIntervalMillis != null || listener != null) {
             // Create a scheduler if needed
@@ -308,9 +317,62 @@ public class BulkIngester<Context> implements AutoCloseable {
         return currentSize < maxSize && operations.size() < maxOperations;
     }
 
-    private boolean closedAndFlushed() {
-        return isClosed && operations.isEmpty() && requestsInFlightCount == 0 && listenerInProgressCount.get() == 0
+    private boolean isDrained() {
+        return operations.isEmpty() && requestsInFlightCount == 0 && listenerInProgressCount.get() == 0
                 && retriesInProgressCount.get() == 0;
+    }
+
+    private FnCondition condition(java.util.function.BooleanSupplier ready) {
+        return new FnCondition(lock, ready, this);
+    }
+
+    long deadlineNanos() {
+        return System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(waitTimeoutMillis);
+    }
+
+    void timeout() {
+        throw fail(timeoutFailure);
+    }
+
+    public void throwIfFailed() {
+        if (failure != null) {
+            throw terminalFailure;
+        }
+    }
+
+    IllegalStateException fail(Throwable cause) {
+        synchronized (terminalFailure) {
+            if (failure == null) {
+                terminalFailure.initCause(cause);
+                failure = cause;
+            }
+        }
+        // Never wait for a lock held by a failed callback. Timed waiters also recheck failure.
+        if (lock.tryLock()) {
+            try {
+                addCondition.condition.signalAll();
+                sendRequestCondition.condition.signalAll();
+                drainedCondition.condition.signalAll();
+            } finally {
+                lock.unlock();
+            }
+        }
+        return terminalFailure;
+    }
+
+    /** Flush and await HTTP, retry and listener completion; any failure permanently rejects acknowledgement. */
+    public void flushAndAwait() {
+        try {
+            drainUntil(deadlineNanos());
+            throwIfFailed();
+        } catch (Throwable t) {
+            throw fail(t);
+        }
+    }
+
+    private void drainUntil(long deadlineNanos) {
+        flush(deadlineNanos);
+        drainedCondition.awaitUntil(deadlineNanos);
     }
 
     // ----- Ingester logic
@@ -339,7 +401,7 @@ public class BulkIngester<Context> implements AutoCloseable {
         try {
             flush();
         } catch (Throwable thr) {
-            // Log the error and continue
+            // flush() has already published terminal failure. Keep background diagnostics.
             logger.error("Error in background flush", thr);
         }
     }
@@ -347,209 +409,173 @@ public class BulkIngester<Context> implements AutoCloseable {
     /**
      * Manually flush any buffered operations, sending them to OpenSearch immediately.
      * <p>
-     * This method is non-blocking and returns immediately. Flushing happens asynchronously, subject to the
-     * maxConcurrentRequests limit. Operations that are scheduled for retry will only be sent once their retry delay has
-     * elapsed.
+     * Waits for a request slot within the configured deadline, then sends asynchronously without waiting for the
+     * response or listener. Operations scheduled for retry are sent only after their retry delay has elapsed. Use
+     * {@link #flushAndAwait()} before acknowledging records.
      * <p>
      * This method is useful when you want to ensure operations are sent without waiting for automatic flush triggers
      * (maxOperations, maxSize, or flushInterval).
      */
     public void flush() {
-        List<RetryableBulkOperation<Context>> sentRequests = new ArrayList<>();
-        RequestExecution<Context> exec = sendRequestCondition.whenReadyIf(() -> {
-            // May happen on manual and periodic flushes
-            return !operations.isEmpty() && operations.stream().anyMatch(RetryableBulkOperation::isSendable);
-        }, () -> {
-            // Selecting operations that can be sent immediately,
-            // Dividing actual operations from contexts
-            List<BulkOperation> immediateOps = new ArrayList<>();
-            List<Context> contexts = new ArrayList<>();
+        flush(deadlineNanos());
+    }
 
-            for (Iterator<RetryableBulkOperation<Context>> it = operations.iterator(); it.hasNext();) {
-                RetryableBulkOperation<Context> op = it.next();
-                if (op.isSendable()) {
-                    immediateOps.add(op.operation());
-                    contexts.add(op.context());
+    private void flush(long deadlineNanos) {
+        try {
+            throwIfFailed();
+            flushInternal(deadlineNanos);
+        } catch (Throwable t) {
+            throw fail(t);
+        }
+    }
 
-                    sentRequests.add(op);
-                    it.remove();
-                }
-            }
-
-            // Build the request
-            BulkRequest request = newRequest().operations(immediateOps).build();
-
-            // Prepare for next round
-            currentSize = operations.size();
-            addCondition.signalIfReady();
-
-            long id = sendRequestCondition.invocations();
-
-            if (listener != null) {
-                // synchronous execution to make sure it actually runs before
-                listener.beforeBulk(id, request, contexts);
-            }
-
-            CompletionStage<BulkResponse> result;
-            try {
-                result = client.bulk(request);
-            } catch (IOException e) {
-                // Convert IOException to a failed CompletionStage
-                result = CompletableFuture.failedFuture(e);
-            }
-            requestsInFlightCount++;
-
-            if (listener == null) {
-                // No need to keep the request around, it can be GC'ed
-                request = null;
-            }
-
-            return new RequestExecution<>(id, request, contexts, result);
+    private void flushInternal(long deadlineNanos) {
+        RequestExecution<Context> execution = sendRequestCondition.whenReadyIf(
+                () -> operations.stream().anyMatch(RetryableBulkOperation::isSendable), this::sendRequest,
+                deadlineNanos);
+        if (execution == null) {
+            return;
+        }
+        execution.futureResponse.handle((response, error) -> {
+            completeRequest(execution, response, error);
+            return null;
         });
-
-        if (exec != null) {
-            // A request was actually sent
-            exec.futureResponse.handle((resp, thr) -> {
-                if (resp != null) {
-
-                    // Success? Checking if total or partial
-                    List<BulkResponseItem> failedRequestsCanRetry = resp.items()
-                            .stream()
-                            .filter(i -> i.error() != null && i.status() == 429)
-                            .collect(Collectors.toList());
-
-                    if (failedRequestsCanRetry.isEmpty() || backoffPolicy.equals(BackoffPolicy.noBackoff())) {
-                        // Total success! ...or there's no retry policy implemented. Either way, can call
-                        listenerAfterBulkSuccess(resp, exec);
-                    } else {
-                        // Partial success, retrying failed requests if policy allows it
-                        // Keeping list of retryable requests/responses, to exclude them for calling
-                        // listener later
-                        List<RetryableBulkOperation<Context>> retryableReq = new ArrayList<>();
-                        List<RetryableBulkOperation<Context>> refires = new ArrayList<>();
-                        List<BulkResponseItem> retryableResp = new ArrayList<>();
-
-                        for (BulkResponseItem bulkItemResponse : failedRequestsCanRetry) {
-                            int index = resp.items().indexOf(bulkItemResponse);
-                            selectingRetries(index, bulkItemResponse, sentRequests, retryableResp, retryableReq,
-                                    refires);
-                        }
-                        // Scheduling flushes for just sent out retryable requests
-                        if (!refires.isEmpty()) {
-                            scheduleRetries(refires);
-                        }
-                        // Retrieving list of remaining successful or not retryable requests
-                        retryableReq.forEach(sentRequests::remove);
-                        if (!sentRequests.isEmpty()) {
-                            if (listener != null) {
-                                // Creating partial BulkRequest
-                                List<BulkOperation> partialOps = new ArrayList<>();
-                                List<Context> partialCtx = new ArrayList<>();
-                                for (RetryableBulkOperation<Context> op : sentRequests) {
-                                    partialOps.add(op.operation());
-                                    partialCtx.add(op.context());
-                                }
-                                BulkRequest partialRequest = newRequest().operations(partialOps).build();
-
-                                // Filtering response
-                                List<BulkResponseItem> partialItems = resp.items()
-                                        .stream()
-                                        .filter(i -> !retryableResp.contains(i))
-                                        .collect(Collectors.toList());
-
-                                BulkResponse partialResp = BulkResponse.of(br -> br.items(partialItems)
-                                        .errors(resp.errors())
-                                        .took(resp.took())
-                                        .ingestTook(resp.ingestTook()));
-
-                                listenerInProgressCount.incrementAndGet();
-                                scheduler.submit(() -> {
-                                    try {
-                                        listener.afterBulk(exec.id, partialRequest, partialCtx, partialResp);
-                                    } finally {
-                                        if (listenerInProgressCount.decrementAndGet() == 0) {
-                                            closeCondition.signalIfReady();
-                                        }
-                                    }
-                                });
-                            }
-                        }
-
-                    }
-                } else {
-                    // Failure
-                    listenerAfterBulkException(thr, exec);
-                }
-
-                sendRequestCondition.signalIfReadyAfter(() -> {
-                    requestsInFlightCount--;
-                    closeCondition.signalAllIfReady();
-                });
-                return null;
-            });
-        }
     }
 
-    private void selectingRetries(int index, BulkResponseItem bulkItemResponse,
-            List<RetryableBulkOperation<Context>> sentRequests, List<BulkResponseItem> retryableResp,
-            List<RetryableBulkOperation<Context>> retryableReq, List<RetryableBulkOperation<Context>> refires) {
-
-        // Getting original failed, requests and keeping successful ones to send to the listener
-        RetryableBulkOperation<Context> original = sentRequests.get(index);
-        if (original.canRetry()) {
-            retryableResp.add(bulkItemResponse);
-            Iterator<Long> retryTimes = Optional.ofNullable(original.retries()).orElse(backoffPolicy.iterator());
-            RetryableBulkOperation<Context> refire = new RetryableBulkOperation<>(original.operation(),
-                    original.context(), retryTimes);
-            retryableReq.add(original);
-            refires.add(refire);
-            addRetry(refire);
-            logger.warn("Added failed request back in queue, retrying in : " + refire.currentRetryTimeDelay() + " ms");
-        } else {
-            logger.warn("Retries finished for request: " + original.operation()._kind().toString());
+    // Called with the ingester lock held, after a request slot becomes available.
+    private RequestExecution<Context> sendRequest() {
+        List<RetryableBulkOperation<Context>> sentOperations = new ArrayList<>();
+        List<BulkOperation> immediateOps = new ArrayList<>();
+        List<Context> contexts = new ArrayList<>();
+        for (Iterator<RetryableBulkOperation<Context>> it = operations.iterator(); it.hasNext();) {
+            RetryableBulkOperation<Context> operation = it.next();
+            if (operation.isSendable()) {
+                immediateOps.add(operation.operation());
+                contexts.add(operation.context());
+                sentOperations.add(operation);
+                it.remove();
+            }
         }
-    }
 
-    private void listenerAfterBulkException(Throwable thr, RequestExecution<Context> exec) {
+        BulkRequest request = newRequest().operations(immediateOps).build();
+        currentSize = operations.size();
+        addCondition.signalIfReady();
+        long id = sendRequestCondition.invocations();
         if (listener != null) {
-            listenerInProgressCount.incrementAndGet();
-            scheduler.submit(() -> {
-                try {
-                    listener.afterBulk(exec.id, exec.request, exec.contexts, thr);
-                } finally {
-                    if (listenerInProgressCount.decrementAndGet() == 0) {
-                        closeCondition.signalIfReady();
-                    }
-                }
+            listener.beforeBulk(id, request, contexts);
+        }
+
+        CompletionStage<BulkResponse> response;
+        try {
+            response = client.bulk(request);
+        } catch (Throwable t) {
+            // Publish synchronous failure before allocating any completion machinery.
+            throw fail(t);
+        }
+        requestsInFlightCount++;
+        return new RequestExecution<>(id, listener == null ? null : request, contexts, sentOperations, response);
+    }
+
+    private void completeRequest(RequestExecution<Context> execution, BulkResponse response, Throwable error) {
+        try {
+            throwIfFailed();
+            if (response != null) {
+                processResponse(execution, response);
+            } else {
+                // Publish the original cause before allocating/scheduling listener work.
+                fail(error);
+                runListener(() -> listener.afterBulk(execution.id, execution.request, execution.contexts, error));
+            }
+        } catch (Throwable t) {
+            fail(t);
+        } finally {
+            // Accounting cleanup is not acknowledgement: every barrier checks terminal failure.
+            sendRequestCondition.signalIfReadyAfter(() -> {
+                requestsInFlightCount--;
+                drainedCondition.signalAllIfReady();
             });
         }
     }
 
-    private void listenerAfterBulkSuccess(BulkResponse resp, RequestExecution<Context> exec) {
-        if (listener != null) {
-            listenerInProgressCount.incrementAndGet();
-            scheduler.submit(() -> {
+    private void processResponse(RequestExecution<Context> execution, BulkResponse response) {
+        if (response.items().size() != execution.sentOperations.size()) {
+            throw new IllegalStateException("Bulk response item count mismatch");
+        }
+        // Inspect the whole response before scheduling retries: a null item must fail the batch first.
+        boolean hasRetryableItems = false;
+        for (BulkResponseItem item : response.items()) {
+            if (item.error() != null && item.status() == 429) {
+                hasRetryableItems = true;
+            }
+        }
+        if (!hasRetryableItems || backoffPolicy.equals(BackoffPolicy.noBackoff())) {
+            runListener(() -> listener.afterBulk(execution.id, execution.request, execution.contexts, response));
+            return;
+        }
+        retryFailedOperations(execution, response);
+    }
+
+    private void retryFailedOperations(RequestExecution<Context> execution, BulkResponse response) {
+        List<BulkOperation> completedOperations = new ArrayList<>();
+        List<Context> completedContexts = new ArrayList<>();
+        List<BulkResponseItem> completedItems = new ArrayList<>();
+        boolean retried = false;
+        for (int i = 0; i < response.items().size(); i++) {
+            BulkResponseItem item = response.items().get(i);
+            RetryableBulkOperation<Context> original = execution.sentOperations.get(i);
+            if (item.error() != null && item.status() == 429 && original.canRetry()) {
+                Iterator<Long> delays = Optional.ofNullable(original.retries()).orElse(backoffPolicy.iterator());
+                RetryableBulkOperation<Context> retry = new RetryableBulkOperation<>(original.operation(),
+                        original.context(), delays);
+                addRetry(retry);
+                retried = true;
+            } else {
+                completedOperations.add(original.operation());
+                completedContexts.add(original.context());
+                completedItems.add(item);
+            }
+        }
+        if (!retried) {
+            runListener(() -> listener.afterBulk(execution.id, execution.request, execution.contexts, response));
+            return;
+        }
+        if (completedOperations.isEmpty() || listener == null) {
+            return;
+        }
+        BulkRequest completedRequest = newRequest().operations(completedOperations).build();
+        BulkResponse completedResponse = BulkResponse.of(b -> b.items(completedItems)
+                .errors(response.errors())
+                .took(response.took())
+                .ingestTook(response.ingestTook()));
+        runListener(() -> listener.afterBulk(execution.id, completedRequest, completedContexts, completedResponse));
+    }
+
+    private void runListener(Runnable callback) {
+        if (listener == null) {
+            return;
+        }
+        listenerInProgressCount.incrementAndGet();
+        try {
+            scheduler.execute(() -> {
                 try {
-                    listener.afterBulk(exec.id, exec.request, exec.contexts, resp);
+                    callback.run();
+                } catch (Throwable t) {
+                    fail(t);
                 } finally {
-                    if (listenerInProgressCount.decrementAndGet() == 0) {
-                        closeCondition.signalIfReady();
-                    }
+                    listenerFinished();
                 }
             });
+        } catch (Throwable t) {
+            // A rejected callback is terminal too; release its accounting only after publishing failure.
+            fail(t);
+            listenerFinished();
         }
     }
 
-    private void scheduleRetries(List<RetryableBulkOperation<Context>> retryableReq) {
-        LongSummaryStatistics statsDelays = retryableReq.stream()
-                .map(RetryableBulkOperation::currentRetryTimeDelay)
-                .mapToLong(Long::longValue)
-                .summaryStatistics();
-
-        // scheduling earlier and latest delay
-        retryScheduler.schedule(this::flush, statsDelays.getMin(), TimeUnit.MILLISECONDS);
-        retryScheduler.schedule(this::flush, statsDelays.getMax(), TimeUnit.MILLISECONDS);
-
+    private void listenerFinished() {
+        if (listenerInProgressCount.decrementAndGet() == 0) {
+            drainedCondition.signalAllIfReady();
+        }
     }
 
     /**
@@ -569,39 +595,57 @@ public class BulkIngester<Context> implements AutoCloseable {
      *             if the ingester has been closed
      */
     public void add(BulkOperation operation, Context context) {
-        if (isClosed) {
-            throw new IllegalStateException("Ingester has been closed");
+        try {
+            throwIfFailed();
+            if (isClosed) {
+                throw new IllegalStateException("Ingester has been closed");
+            }
+            innerAdd(new RetryableBulkOperation<>(operation, context, null));
+        } catch (Throwable t) {
+            throw fail(t);
         }
-
-        RetryableBulkOperation<Context> repeatableOp = new RetryableBulkOperation<>(operation, context, null);
-
-        innerAdd(repeatableOp);
     }
 
-    // Same as "add", but skips the closed check to allow retries to be added even after ingester closure
-    private void addRetry(RetryableBulkOperation<Context> repeatableOp) {
-        // Sending the operation back in the queue using the retry scheduler
+    // Count asynchronous re-admission until the retry is represented in the operation buffer.
+    private void addRetry(RetryableBulkOperation<Context> retry) {
         retriesInProgressCount.incrementAndGet();
-        retryScheduler.submit(() -> {
-            try {
-                innerAdd(repeatableOp);
-            } finally {
-                if (retriesInProgressCount.decrementAndGet() == 0) {
-                    closeCondition.signalIfReady();
+        try {
+            retryScheduler.submit(() -> {
+                try {
+                    innerAdd(retry);
+                    // Schedule only after re-admission: an earlier wakeup can find an empty buffer.
+                    // Buffering before the backoff expires lets rejected records form a bulk again.
+                    retryScheduler.schedule(this::failsafeFlush, Math.max(0, retry.currentRetryTimeDelay()),
+                            TimeUnit.MILLISECONDS);
+                } catch (Throwable t) {
+                    fail(t);
+                } finally {
+                    retryFinished();
                 }
-            }
-        });
+            });
+        } catch (Throwable t) {
+            fail(t);
+            retryFinished();
+            throw terminalFailure;
+        }
+    }
+
+    private void retryFinished() {
+        if (retriesInProgressCount.decrementAndGet() == 0) {
+            drainedCondition.signalAllIfReady();
+        }
     }
 
     private void innerAdd(RetryableBulkOperation<Context> repeatableOp) {
         IngesterOperation ingestOp = IngesterOperation.of(repeatableOp, client._transport().jsonpMapper());
 
-        addCondition.whenReady(() -> {
+        long deadlineNanos = deadlineNanos();
+        addCondition.whenReadyUntil(deadlineNanos, () -> {
             operations.add(ingestOp.repeatableOperation());
             currentSize += ingestOp.size();
 
             if (!canAddOperation()) {
-                flush();
+                flush(deadlineNanos);
             } else {
                 addCondition.signalIfReady();
             }
@@ -666,22 +710,20 @@ public class BulkIngester<Context> implements AutoCloseable {
         }
 
         isClosed = true;
-        // Flush buffered operations
-        flush();
-        // and wait for all requests to be completed
-        closeCondition.whenReady(() -> {
-        });
+        try {
+            drainUntil(deadlineNanos());
+        } finally {
+            if (flushTask != null) {
+                flushTask.cancel(false);
+            }
 
-        if (flushTask != null) {
-            flushTask.cancel(false);
-        }
+            if (scheduler != null && !isExternalScheduler) {
+                scheduler.shutdownNow();
+            }
 
-        if (scheduler != null && !isExternalScheduler) {
-            scheduler.shutdownNow();
-        }
-
-        if (retryScheduler != null) {
-            retryScheduler.shutdownNow();
+            if (retryScheduler != null) {
+                retryScheduler.shutdownNow();
+            }
         }
     }
 
@@ -701,6 +743,16 @@ public class BulkIngester<Context> implements AutoCloseable {
         private BulkListener<Context> listener;
         private ScheduledExecutorService scheduler;
         private BackoffPolicy backoffPolicy;
+        private long waitTimeoutMillis;
+
+        /** Required positive maximum wait for admission, flush barrier or close. */
+        public Builder<Context> waitTimeout(long millis) {
+            if (millis <= 0 || millis > TimeUnit.NANOSECONDS.toMillis(Long.MAX_VALUE / 2)) {
+                throw new IllegalArgumentException("Invalid wait timeout");
+            }
+            this.waitTimeoutMillis = millis;
+            return this;
+        }
 
         public Builder<Context> client(OpenSearchAsyncClient client) {
             this.client = client;

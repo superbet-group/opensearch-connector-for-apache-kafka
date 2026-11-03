@@ -32,6 +32,7 @@
 
 package io.aiven.kafka.connect.opensearch.bulk;
 
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.Lock;
 import java.util.function.BooleanSupplier;
@@ -50,13 +51,26 @@ class FnCondition {
     private final Lock lock;
     public final Condition condition;
     private final BooleanSupplier ready;
+    private final BulkIngester<?> ingester;
     private long invocations;
     private long contentions;
 
-    FnCondition(Lock lock, BooleanSupplier ready) {
+    FnCondition(Lock lock, BooleanSupplier ready, BulkIngester<?> ingester) {
         this.lock = lock;
         this.condition = lock.newCondition();
         this.ready = ready;
+        this.ingester = ingester;
+    }
+
+    public void awaitUntil(long deadlineNanos) {
+        whenReadyIf(null, () -> null, deadlineNanos);
+    }
+
+    public void whenReadyUntil(long deadlineNanos, Runnable fn) {
+        whenReadyIf(null, () -> {
+            fn.run();
+            return null;
+        }, deadlineNanos);
     }
 
     /**
@@ -103,29 +117,48 @@ class FnCondition {
      * @return the result of {@code fn}.
      */
     public <T> T whenReadyIf(BooleanSupplier canRun, Supplier<T> fn) {
-        lock.lock();
+        return whenReadyIf(canRun, fn, ingester.deadlineNanos());
+    }
+
+    public <T> T whenReadyIf(BooleanSupplier canRun, Supplier<T> fn, long deadlineNanos) {
+        ingester.throwIfFailed();
+        boolean acquired = false;
         try {
+            acquired = lock.tryLock(Math.max(0, deadlineNanos - System.nanoTime()), TimeUnit.NANOSECONDS);
+            if (!acquired) {
+                ingester.timeout();
+            }
+            ingester.throwIfFailed();
             if (canRun != null && !canRun.getAsBoolean()) {
                 return null;
             }
-
             invocations++;
             boolean firstLoop = true;
             while (!ready.getAsBoolean()) {
+                ingester.throwIfFailed();
                 if (firstLoop) {
                     contentions++;
                     firstLoop = false;
                 }
-                condition.awaitUninterruptibly();
+                long remaining = deadlineNanos - System.nanoTime();
+                if (remaining <= 0) {
+                    ingester.timeout();
+                }
+                condition.awaitNanos(remaining);
             }
-
+            ingester.throwIfFailed();
             if (canRun != null && !canRun.getAsBoolean()) {
                 return null;
             }
-
             return fn.get();
+        } catch (InterruptedException e) {
+            IllegalStateException failure = ingester.fail(e);
+            Thread.currentThread().interrupt();
+            throw failure;
         } finally {
-            lock.unlock();
+            if (acquired) {
+                lock.unlock();
+            }
         }
     }
 
